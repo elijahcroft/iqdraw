@@ -1,7 +1,13 @@
 # IQDraw
 
+[![Tests](https://github.com/elijahcroft/iqdraw/actions/workflows/tests.yml/badge.svg)](https://github.com/elijahcroft/iqdraw/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+
 Create printable, step-by-step VEX IQ (2nd generation) build instructions from
 a small, readable Python specification.
+
+**[Read a finished booklet, and four worked builds &rarr;](https://elijahcroft.github.io/iqdraw/)**
 
 You describe a build as a list of parts at hole coordinates. It renders
 isometric step-by-step diagrams and wraps them in a printable booklet with a
