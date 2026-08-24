@@ -13,7 +13,10 @@ env/
 build/
 dist/
 out/
+_site/
 *.html
+# ...but the Pages landing page is source, not generated output.
+!docs/*.html
 
 # Optional private mesh provider. Do not publish third-party CAD-derived data.
 cadmesh.py
