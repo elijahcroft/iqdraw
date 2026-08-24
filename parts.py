@@ -335,21 +335,72 @@ def _painted_hole(x, y, z, up, base):
 
 
 def _attach_face_details(prims, details, up=1):
-    """Draw broad face markings after every cap cell they can overlap."""
+    """Lift broad face markings clear of triangulated cap cells.
+
+    A gear face is divided into narrow radial facets for depth sorting.  A
+    round hole spans several of those facets, so attaching it to any one host
+    lets the neighbouring facets paint over it.  A hair of physical relief is
+    both true to the molded rim around the holes and keeps the complete detail
+    ahead of every coplanar cap cell.
+    """
     caps = [p for p in prims
             if isinstance(p, Facet) and p.normal[2] * up > 0.9]
     if not caps:
         return prims
     zmax = max(f.pts[0][2] * up for f in caps)
-    caps = [f for f in caps if abs(f.pts[0][2] * up - zmax) < 1e-9]
-    # Gear holes span several of the radial triangles used to depth-sort the
-    # large face.  Parking them on the foremost cap keeps neighbouring cap
-    # cells from clipping them into crescents.
-    host = max(caps, key=lambda f: sum(
-        (x + y + z) / len(f.pts) for x, y, z in f.pts
-    ) * up)
-    host.decals = list(host.decals) + list(details)
+    dz = (zmax + 0.004) * up
+    for detail in details:
+        if isinstance(detail, Disc):
+            detail.center = (detail.center[0], detail.center[1], dz)
+        else:
+            detail.pts = [(x, y, dz) for x, y, _ in detail.pts]
+        prims.append(detail)
     return prims
+
+
+def _annular_cylinder(outer_r, inner_r, z0, z1, color, segments=36):
+    """A hollow cylinder with real front and rear annular faces."""
+    outer = circle_profile(outer_r, segments)
+    inner = circle_profile(inner_r, segments)
+    p = extrude(outer, z0, z1, color, cap_top=False, cap_bottom=False,
+                rim_top=True, rim_bottom=True)
+    # Reversing the inner profile points its wall normals into the opening.
+    p += extrude(list(reversed(inner)), z0, z1, color,
+                 cap_top=False, cap_bottom=False,
+                 rim_top=True, rim_bottom=True)
+    for i in range(segments):
+        j = (i + 1) % segments
+        top = [(*outer[i], z1), (*outer[j], z1),
+               (*inner[j], z1), (*inner[i], z1)]
+        bottom = [(*inner[i], z0), (*inner[j], z0),
+                  (*outer[j], z0), (*outer[i], z0)]
+        p.append(Facet(top, color, (0.0, 0.0, 1.0)))
+        p.append(Facet(bottom, color, (0.0, 0.0, -1.0)))
+    return p
+
+
+def _wheel_tread(r, width, color, count=24):
+    """Staggered diagonal rubber lugs on a travel tire's circumference."""
+    tread_c = mix_color(color, "#080a0d", 0.34)
+    p = []
+    da = math.pi / count * 0.48
+    gap = width * 0.08
+    for i in range(count):
+        a = 2 * math.pi * i / count
+        # Opposing slants form the shallow chevron pattern on the real tire.
+        for z0, z1, slant in ((-width / 2 + gap, -gap, +1),
+                              (gap, width / 2 - gap, -1)):
+            angles = (a - da, a + da, a + da + slant * da,
+                      a - da + slant * da)
+            pts = [
+                (r * math.cos(angles[0]), r * math.sin(angles[0]), z0),
+                (r * math.cos(angles[1]), r * math.sin(angles[1]), z0),
+                (r * math.cos(angles[2]), r * math.sin(angles[2]), z1),
+                (r * math.cos(angles[3]), r * math.sin(angles[3]), z1),
+            ]
+            p.append(Facet(pts, tread_c,
+                           (math.cos(a), math.sin(a), 0.0), shade=0.72))
+    return p
 
 
 def _square_bar(across, z0, z1, color, corner=0.06):
@@ -508,17 +559,77 @@ def _wheel(travel_mm, color):
     # "200mm wheel" rolls 200 mm per turn, so it is 200/pi = 63.7 mm across.
     # Taking the name as a diameter draws every wheel pi times too big.
     r = travel_mm / math.pi / PITCH_MM / 2.0
-    width = 0.95
-    hub_c = PALETTE["white"]  # light-grey hub, so it reads against a black tyre
-    zc = width / 2 + 0.16
-    p = cylinder(r, -width / 2, width / 2, color, segments=36)          # tread
-    p += cylinder(r * 0.93, -width / 2 - 0.04, width / 2 + 0.04, color, segments=36)
-    p += cylinder(r * 0.69, -width / 2 - 0.14, width / 2 + 0.14, hub_c, segments=30)
-    boss = attach(cylinder(0.42, -zc, zc, hub_c, segments=22),
+
+    # These are assemblies, not one proportional wheel scaled four ways.
+    # VEX pairs the 100 mm tire with a blue 20 mm pulley, the 160/200 mm tires
+    # with its 44 mm hub, and the 250 mm tire with its 64 mm hub.
+    if travel_mm <= 100:
+        hub_r, hub_c, hole_r = 10.0 / PITCH_MM, PALETTE["blue"], None
+        width = 0.72
+    elif travel_mm <= 200:
+        hub_r, hub_c, hole_r = 22.0 / PITCH_MM, PALETTE["grey"], 0.78
+        width = 0.88 if travel_mm == 200 else 1.02
+    else:
+        hub_r, hub_c, hole_r = 32.0 / PITCH_MM, PALETTE["grey"], 1.02
+        width = 1.20
+
+    hub_width = width + 0.22
+    zc = hub_width / 2 + 0.12
+    # A real annulus stops the tire's cap triangles from showing through the
+    # hub, which was the source of the white spikes in wheel callout icons.
+    p = _annular_cylinder(r, hub_r * 0.97, -width / 2, width / 2,
+                          color, segments=40)
+    p += _wheel_tread(r + 0.006, width, color)
+    # A shallow sidewall molding ring keeps the tire from reading as a plain
+    # black washer when the parts callout shows it nearly face-on.
+    sidewall_c = mix_color(color, "#707780", 0.12)
+    mid_r = (r + hub_r) / 2
+    band = min(0.055, (r - hub_r) * 0.16)
+    for z0, z1 in ((width / 2, width / 2 + 0.012),
+                   (-width / 2 - 0.012, -width / 2)):
+        p += _annular_cylinder(mid_r + band, mid_r - band, z0, z1,
+                               sidewall_c, segments=40)
+
+    holes = ()
+    if hole_r is None:
+        # The 100 mm tire presses over a six-spoke 20 mm pulley, not a scaled
+        # down version of the solid wheel hub.
+        p += _annular_cylinder(hub_r, hub_r * 0.68,
+                               -hub_width / 2, hub_width / 2,
+                               hub_c, segments=30)
+        spoke = box(0.28, -0.055, -hub_width / 2,
+                    hub_r * 0.80, 0.055, hub_width / 2,
+                    hub_c, cell=1.0)
+        for a in range(0, 360, 60):
+            tf = Transform(euler(rz=a))
+            p += [prim.xform(tf) for prim in spoke]
+    else:
+        # The 44/64 mm hubs are open, ribbed cups.  Modeling the holes as
+        # actual annuli (instead of dark spots on a solid disc) keeps pins and
+        # shafts visible through them and avoids painter-order crescents.
+        face0, face1 = -hub_width / 2 - 0.025, hub_width / 2 + 0.025
+        p += _annular_cylinder(hub_r, hub_r * 0.76, face0, face1,
+                               hub_c, segments=36)
+        holes = tuple(
+            (hole_r * math.cos(math.radians(a)),
+             hole_r * math.sin(math.radians(a)), 0.0)
+            for a in range(0, 360, 45)
+        )
+        collar = _annular_cylinder(HOLE_R * 1.34, HOLE_R,
+                                   face0, face1, hub_c, segments=20)
+        for x, y, _ in holes:
+            p += moved(collar, (x, y, 0.0))
+        rib = box(0.34, -0.055, face0, hub_r * 0.82, 0.055, face1,
+                  hub_c, cell=1.0)
+        for a in range(0, 360, 45):
+            tf = Transform(euler(rz=a + 22.5))
+            p += [prim.xform(tf) for prim in rib]
+
+    boss = attach(cylinder(0.39, -zc, zc, hub_c, segments=22),
                   _bore_decal(zc, +1, 0.0, hub_c, square=True), +1)
     attach(boss, _bore_decal(-zc, -1, 0.0, hub_c, square=True), -1)
-    return Part(f"wheel_{travel_mm}", f"{travel_mm}mm Travel Wheel", color, p + boss,
-                icon_rot=(90.0, 0.0, 0.0))
+    return Part(f"wheel_{travel_mm}", f"{travel_mm}mm Travel Wheel",
+                color, p + boss, holes, icon_rot=(-51.0, 0.0, -45.0))
 
 
 def _collar(color):

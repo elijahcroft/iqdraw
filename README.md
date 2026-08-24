@@ -12,7 +12,34 @@ frame — written once, placed twice, mirrored for the far side — and its
 booklet is divided into named **sections**. See
 [Building something bigger](#building-something-bigger).
 
-IQDraw has no runtime dependencies and works offline with Python 3.9 or newer.
+IQDraw works offline with Python 3.9 or newer. Its renderer is
+standard-library-only; the desktop installation includes CustomTkinter.
+
+## Desktop app
+
+Prefer buttons to terminal commands? Launch **IQDraw Studio** after installing:
+
+```bash
+iqdraw-gui
+```
+
+You can also use `iqdraw --gui`, or open a build immediately with
+`iqdraw-gui examples/gear-train.py`. The desktop app includes bundled examples,
+recent projects, step and inventory review, validation results, remembered
+drawing options, source auto-reload, keyboard shortcuts, and HTML/SVG/PNG
+output. Rendering stays responsive in the background and uses the same tested
+path as the CLI.
+
+It uses CustomTkinter for a modern, system-aware desktop interface. The normal
+IQDraw installation includes it automatically; some minimal Linux systems may
+also need their OS's `python3-tk` package. Build specs are Python programs, so
+only open files you trust. Studio inspects a spec in a short-lived helper
+process to keep its state out of the GUI, but that is not a security sandbox.
+
+Homebrew installs Tk separately from Python. If a Homebrew-based environment
+reports `No module named '_tkinter'`, install the matching formula—for example,
+`brew install python-tk@3.14` for Homebrew Python 3.14—then try `iqdraw-gui`
+again.
 
 ## Quick start
 
@@ -407,7 +434,7 @@ catalogue.
 | `shaft_N` | N pitch long, square 3.18 mm section |
 | `standoff_N` | N pitch long, runs `0`…`N` from `at` — sits **on** a face |
 | `gear_N` | `gear_12` `gear_36` `gear_60`; official round lightening-hole patterns and raised hubs |
-| `wheel_N` | N = travel per revolution in mm, as VEX names them: `wheel_200`, `wheel_160`, `wheel_100`. Diameter is `N/pi` |
+| `wheel_N` | N = travel per revolution in mm: `wheel_100`, `wheel_160`, `wheel_200`, `wheel_250`. Uses the matching 20 mm pulley, 44 mm hub, or 64 mm hub; diameter is `N/pi` |
 | `collar` `spacer` `washer` | |
 | `motor` `brain` `bumper` `distance` `battery` | |
 | `band_N` | rubber band, drawn stretched over N pitch |

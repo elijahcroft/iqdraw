@@ -90,6 +90,41 @@ class TestGearGeometry(unittest.TestCase):
         width = max(p[0] for p in pts) - min(p[0] for p in pts)
         self.assertAlmostEqual(width, 3.0, delta=0.6)
 
+    def test_gear_face_details_are_not_clipped_into_one_cap_cell(self):
+        gear = get("gear_36")
+        dark_discs = [p for p in gear.prims if isinstance(p, Disc)]
+        self.assertEqual(len(dark_discs), 16)  # rim + bore for eight holes
+
+
+class TestWheelGeometry(unittest.TestCase):
+    def test_wheel_diameter_comes_from_travel(self):
+        for travel in (100, 160, 200, 250):
+            with self.subTest(travel=travel):
+                pts = [p for prim in get(f"wheel_{travel}").prims
+                       if isinstance(prim, Facet) for p in prim.pts]
+                diameter = max(p[0] for p in pts) - min(p[0] for p in pts)
+                expected = travel / parts.PITCH_MM / 3.141592653589793
+                self.assertAlmostEqual(diameter, expected, delta=0.08)
+
+    def test_160_and_200_wheels_share_the_44mm_hub(self):
+        # Their tire diameters differ, but VEX specifies the same 44 mm hub.
+        for travel in (160, 200):
+            wheel = get(f"wheel_{travel}")
+            grey_pts = [p for prim in wheel.prims
+                        if isinstance(prim, Facet) and prim.color == PALETTE["grey"]
+                        for p in prim.pts]
+            diameter = max(p[0] for p in grey_pts) - min(p[0] for p in grey_pts)
+            self.assertAlmostEqual(diameter, 44.0 / parts.PITCH_MM, delta=0.08)
+
+    def test_standard_wheel_hub_has_eight_attachment_holes(self):
+        self.assertEqual(len(get("wheel_200").holes), 8)
+
+    def test_100mm_tire_uses_a_pulley_without_attachment_holes(self):
+        wheel = get("wheel_100")
+        self.assertEqual(wheel.holes, ())
+        self.assertTrue(any(isinstance(p, Facet) and p.color == PALETTE["blue"]
+                            for p in wheel.prims))
+
 
 class TestDetail(unittest.TestCase):
     def tearDown(self):

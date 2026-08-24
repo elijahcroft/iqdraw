@@ -108,7 +108,16 @@ def main(argv=None):
                     help="treat any problem the checks find as an error")
     ap.add_argument("--check-only", action="store_true",
                     help="run the checks and report, without drawing anything")
+    ap.add_argument("--gui", action="store_true",
+                    help="open the desktop interface")
     args = ap.parse_args(argv)
+
+    if args.gui:
+        if args.new:
+            ap.error("--gui and --new cannot be used together")
+        from .gui import main as gui_main
+        gui_main([str(args.spec)] if args.spec else [])
+        return
 
     if args.new:
         if args.spec:

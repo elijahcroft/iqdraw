@@ -13,6 +13,8 @@ printable instructions without needing CAD expertise or a web service.
 
 ## Next: make authoring easier
 
+- Continue the desktop work in [`STUDIO_PLAN.md`](STUDIO_PLAN.md), with
+  explicit low-risk delegation lanes and close-review core projects.
 - Add `iqdraw parts` with a generated visual catalogue and searchable names.
 - Add a browser-based coordinate inspector for placing and rotating a part.
 - Report inventory against common classroom kits and flag missing quantities.

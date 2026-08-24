@@ -1,7 +1,8 @@
 # Contributing to iqdraw
 
-The library has no dependencies and the tests have none either, so there is no
-install step and no virtualenv to set up.
+The renderer and tests have no dependencies, so contributors can run the suite
+without an install or virtualenv. The desktop entry point uses CustomTkinter;
+`python3 -m pip install -e .` installs it for GUI work.
 
 ```bash
 ./run-tests.sh            # all of it, about 30 seconds
@@ -25,9 +26,16 @@ used by `--png`.
 | `check.py` | the sanity checks that run before every draw |
 | `instructions.py` | the printable HTML booklet |
 | `__main__.py` | the command line |
+| `gui.py` | the CustomTkinter desktop interface and background workers |
+| `gui_state.py` | recent files and persistent desktop preferences |
+| `gui_inspect.py` | short-lived build-inspection helper process |
 
 The dependency order is strictly one way: `geom` → `parts` → `spec`/`render` →
 `instructions`. Nothing lower imports anything higher.
+
+The GUI calls the CLI for rendering rather than implementing a second render
+path. Keep it that way: an option added to the desktop form should translate
+to a tested CLI command in `render_command()`.
 
 ---
 

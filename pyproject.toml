@@ -1,5 +1,5 @@
-# iqdraw is a plain package with no dependencies, so this file exists to make
-# it installable rather than to configure a build.
+# The renderer stays standard-library-only. CustomTkinter is the one packaged
+# dependency and belongs exclusively to the optional desktop entry point.
 #
 # The package directory is also the project root, which is why `package-dir`
 # maps `iqdraw` to ".". This preserves the original import layout while making
@@ -15,7 +15,8 @@ version = "0.3.0"
 description = "VEX IQ (2nd gen) build instructions, drawn from a text spec"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["vex", "vex-iq", "robotics", "education", "svg", "isometric"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -24,7 +25,7 @@ classifiers = [
     "Topic :: Education",
     "Topic :: Multimedia :: Graphics :: 3D Rendering",
 ]
-dependencies = []
+dependencies = ["customtkinter>=5.2.2,<6"]
 
 [project.urls]
 Homepage = "https://github.com/elijahcroft/iqdraw"
@@ -33,10 +34,12 @@ Issues = "https://github.com/elijahcroft/iqdraw/issues"
 
 [project.scripts]
 iqdraw = "iqdraw.__main__:main"
+iqdraw-gui = "iqdraw.gui:main"
 
 [tool.setuptools]
 packages = ["iqdraw"]
 package-dir = { iqdraw = "." }
+include-package-data = false
 
 [tool.setuptools.package-data]
-iqdraw = ["README.md"]
+iqdraw = ["README.md", "examples/*.py"]
