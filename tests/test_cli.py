@@ -14,14 +14,12 @@ import unittest
 
 import support
 
-TOOLS = pathlib.Path(support.__file__).resolve().parents[2]
-
 
 def run(*args, cwd=None):
-    env = {"PYTHONPATH": str(TOOLS), "PATH": "/usr/bin:/bin"}
+    env = {"PYTHONPATH": support.IMPORT_ROOT, "PATH": "/usr/bin:/bin"}
     return subprocess.run([sys.executable, "-m", "iqdraw", *map(str, args)],
                           capture_output=True, text=True, env=env,
-                          cwd=cwd or TOOLS.parent)
+                          cwd=cwd or support.examples_dir().parent)
 
 
 class _Temp(unittest.TestCase):
