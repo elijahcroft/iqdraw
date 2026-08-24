@@ -9,6 +9,7 @@ tessellated, so holes stay crisp at any zoom and print size.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from dataclasses import dataclass
 
@@ -64,7 +65,7 @@ class RenderOpts:
     pad: float = 14.0            # pixels of margin
     fade_old: float = 0.52       # how far to wash out already-built parts
     highlight: bool = True       # False renders every step in flat full colour
-    line_scale: float = 0.052    # outline weight, as a fraction of `scale`
+    line_scale: float = 0.040    # fine CAD edge, as a fraction of `scale`
     background: str = None       # e.g. "#ffffff"; None leaves it transparent
 
 
@@ -170,34 +171,143 @@ def union_bounds(*boxes):
 # ---------------------------------------------------------------- SVG output
 
 
+# Decimal places kept in emitted coordinates.  One tenth of a pixel is far
+# past what any screen or printer resolves, and the drawing is scaled to the
+# page anyway; every digit here is paid for once per vertex, and a robot-sized
+# booklet has a few hundred thousand of them.
+PRECISION = 1
+
+
 def _n(v):
     """
-    Compact number formatting.  Values are already in pixels, so one decimal
-    is a tenth of a pixel - far past what any screen or printer resolves - and
-    it takes a big drawing down by a third.
+    Compact number formatting, to `PRECISION` decimal places.
+
+    Trailing zeros and a trailing point are dropped, and every spelling of
+    zero collapses to `0` - including the bare `-` a negative value leaves
+    behind once its digits are stripped.
     """
-    s = f"{v:.1f}".rstrip("0").rstrip(".")
-    return "0" if s in ("", "-0") else s
+    s = f"{v:.{PRECISION}f}"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return "0" if s in ("", "-", "-0") else s
 
 
 def _fill(prim):
-    f = prim.shade if prim.shade is not None else shade_factor(prim.normal)
+    normal = getattr(prim, "shade_normal", None) or prim.normal
+    f = prim.shade if prim.shade is not None else shade_factor(normal)
     return scale_color(prim.color, f)
 
 
-def _draw(prim, scale, ox, oy, lw, out):
+def _screen(p, scale, ox, oy):
+    x, y = project(p)
+    return (round(x * scale + ox, PRECISION), round(y * scale + oy, PRECISION))
+
+
+def _path(points, close):
+    """
+    A polyline as one absolute move followed by relative linetos.
+
+    Neighbouring vertices of a facet are a pixel or two apart, so the deltas
+    between them are one or two digits where the absolute coordinates are
+    four or five.  A booklet is mostly these, and the geometry is identical -
+    only the spelling is shorter.
+
+    The absolute positions are rounded *before* the deltas are taken, so the
+    points reconstruct to exactly the rounded coordinates instead of
+    accumulating a rounding drift along the outline.
+    """
+    x0, y0 = points[0]
+    out = ["M", _pair(x0, y0), "l"]
+    px, py = x0, y0
+    for x, y in points[1:]:
+        pair = _pair(x - px, y - py)
+        # A leading minus separates two numbers on its own, so the space in
+        # front of it is dead weight - and about half of these deltas are
+        # negative.
+        if len(out) > 3 and not pair.startswith("-"):
+            out.append(" ")
+        out.append(pair)
+        px, py = x, y
+    if close:
+        out.append("z")
+    return "".join(out)
+
+
+def _pair(x, y):
+    """`x,y` - but the comma goes too when a minus sign already separates."""
+    nx, ny = _n(x), _n(y)
+    return nx + ny if ny.startswith("-") else f"{nx},{ny}"
+
+
+_ALPHA = "abcdefghijklmnopqrstuvwxyz"
+
+
+def _class_name(i):
+    """Short, always-valid CSS identifiers: a, b, ... z, aa, ab, ..."""
+    name = ""
+    i += 1
+    while i:
+        i, r = divmod(i - 1, 26)
+        name = _ALPHA[r] + name
+    return name
+
+
+class Styles:
+    """
+    Interns paint properties as CSS classes.
+
+    A booklet carries tens of thousands of facets and outline segments, and
+    between them only a few hundred distinct shades - every facet of one part
+    at one angle resolves to the same colour.  Naming each shade once and
+    pointing at it costs a two-character class attribute instead of a repeated
+    pair of hex literals.  Nothing about what is drawn changes.
+
+    Pass one instance to several `render` calls to share a single stylesheet
+    across a whole document; leave it out and each drawing carries its own.
+    """
+
+    def __init__(self):
+        self._names = {}
+
+    def name(self, decl):
+        n = self._names.get(decl)
+        if n is None:
+            n = _class_name(len(self._names))
+            self._names[decl] = n
+        return n
+
+    def css(self, prefix=""):
+        return "".join(f".{prefix}{n}{{{d}}}" for d, n in self._names.items())
+
+    def prefix(self):
+        """
+        A short tag derived from the stylesheet itself.
+
+        A standalone SVG pasted into an HTML page brings its <style> with it,
+        and CSS class names are document-wide - two such drawings on one page
+        would fight over `.a`.  Deriving the tag from the declarations keeps
+        it stable for identical drawings and distinct for different ones,
+        without any global counter.
+        """
+        digest = hashlib.sha1(self.css().encode("utf-8")).hexdigest()[:6]
+        return f"q{digest}"
+
+
+def _draw(prim, scale, ox, oy, lw, styles, out):
+    """
+    Append (class, kind, payload) ops.  Emission batches them afterwards, so
+    geometry is collected here and never formatted into an element directly.
+    """
     if isinstance(prim, Facet):
-        pts = " ".join(
-            f"{_n(project(p)[0] * scale + ox)},{_n(project(p)[1] * scale + oy)}"
-            for p in prim.pts
-        )
         # Stroke each facet in its own fill colour.  Neighbouring coplanar
         # cells otherwise antialias against the background along their shared
         # border and leave a faint grid of seams across every large face.
         fill = _fill(prim)
-        out.append(f'<polygon points="{pts}" fill="{fill}" stroke="{fill}"/>')
+        cls = styles.name(f"fill:{fill};stroke:{fill}")
+        out.append((cls, "path",
+                    _path([_screen(p, scale, ox, oy) for p in prim.pts], True)))
         for d in prim.decals:
-            _draw(d, scale, ox, oy, lw, out)
+            _draw(d, scale, ox, oy, lw, styles, out)
 
     elif isinstance(prim, Disc):
         cx, cy = project(prim.center)
@@ -206,22 +316,50 @@ def _draw(prim, scale, ox, oy, lw, out):
         r = prim.r * scale
         m = (f"matrix({_n(ux * r)},{_n(uy * r)},{_n(vx * r)},{_n(vy * r)},"
              f"{_n(cx * scale + ox)},{_n(cy * scale + oy)})")
-        stroke = ""
+        decl = f"fill:{_fill(prim)}"
         if prim.stroke:
-            stroke = (f' stroke="{scale_color(prim.color, 0.62)}"'
-                      f' stroke-width="{_n(lw * 0.8)}"'
-                      f' vector-effect="non-scaling-stroke"')
-        out.append(f'<ellipse rx="1" ry="1" transform="{m}" '
-                   f'fill="{_fill(prim)}"{stroke}/>')
+            decl += (f";stroke:{scale_color(prim.color, 0.62)}"
+                     f";stroke-width:{_n(lw * 0.8)}"
+                     f";vector-effect:non-scaling-stroke")
+        cls = styles.name(decl)
+        out.append((cls, "ellipse", f'rx="1" ry="1" transform="{m}"'))
 
     else:  # Edge
-        ax, ay = project(prim.a)
-        bx, by = project(prim.b)
-        out.append(
-            f'<line x1="{_n(ax * scale + ox)}" y1="{_n(ay * scale + oy)}" '
-            f'x2="{_n(bx * scale + ox)}" y2="{_n(by * scale + oy)}" '
-            f'stroke="{prim.color}" stroke-width="{_n(lw * prim.width)}"/>'
-        )
+        cls = styles.name(f"fill:none;stroke:{prim.color};"
+                          f"stroke-width:{_n(lw * prim.width)}")
+        out.append((cls, "path",
+                    _path([_screen(prim.a, scale, ox, oy),
+                           _screen(prim.b, scale, ox, oy)], False)))
+
+
+def _emit(ops, prefix):
+    """
+    Turn ops into elements, merging runs that share a class.
+
+    Only ever merges ops that were already adjacent in the depth sort, so
+    paint order is exactly what it was one-element-per-primitive.  Within a
+    single <path> SVG fills the whole geometry and then strokes it, rather
+    than alternating - which is invisible here because a facet's stroke is its
+    own fill colour, the seam-covering trick above.
+    """
+    out = []
+    i = 0
+    while i < len(ops):
+        cls, kind, payload = ops[i]
+        if kind == "raw":
+            out.append(payload)
+            i += 1
+        elif kind == "ellipse":
+            out.append(f'<ellipse class="{prefix}{cls}" {payload}/>')
+            i += 1
+        else:
+            j = i + 1
+            while j < len(ops) and ops[j][1] == "path" and ops[j][0] == cls:
+                j += 1
+            d = "".join(op[2] for op in ops[i:j])
+            out.append(f'<path class="{prefix}{cls}" d="{d}"/>')
+            i = j
+    return out
 
 
 def _part_screen_points(placement, view_rot):
@@ -295,22 +433,29 @@ def _arrow(placement, view_rot, scale, ox, oy, lw):
     halo = _n(lw * 3.2)
     body = _n(lw * 1.9)
     # Drawn twice: a white halo first so the arrow stays readable where it
-    # crosses a dark part.
+    # crosses a dark part.  There are only ever a handful of these, so they
+    # keep their attributes inline rather than earning a class.
     return [
-        f'<line {shaft} stroke="#fff" stroke-width="{halo}"/>',
-        f'<polygon points="{headpts}" fill="#fff" stroke="#fff" '
-        f'stroke-width="{halo}"/>',
-        f'<line {shaft} stroke="{ARROW_COLOR}" stroke-width="{body}"/>',
-        f'<polygon points="{headpts}" fill="{ARROW_COLOR}"/>',
+        (None, "raw", f'<line {shaft} stroke="#fff" stroke-width="{halo}"/>'),
+        (None, "raw", f'<polygon points="{headpts}" fill="#fff" stroke="#fff" '
+                      f'stroke-width="{halo}"/>'),
+        (None, "raw",
+         f'<line {shaft} stroke="{ARROW_COLOR}" stroke-width="{body}"/>'),
+        (None, "raw", f'<polygon points="{headpts}" fill="{ARROW_COLOR}"/>'),
     ]
 
 
 def render(placements, opts: RenderOpts, view_rot=IDENTITY, box=None,
-           class_name=None, arrows=True):
+           class_name=None, arrows=True, styles=None, title=None):
     """
     Render placements to an SVG string.  Pass `box` (an unscaled bounds tuple)
     to force a shared frame across every step so the model does not jump size
     from page to page.
+
+    `styles` shares one stylesheet across several drawings in the same
+    document; left out, the drawing carries its own, name-spaced so it can be
+    pasted anywhere without colliding.  `title` is the accessible name read
+    out to a screen reader.
     """
     prims = visible(world_prims(placements, opts, view_rot))
     b = box or bounds(prims, opts)
@@ -321,32 +466,60 @@ def render(placements, opts: RenderOpts, view_rot=IDENTITY, box=None,
     oy = -y0 * opts.scale + opts.pad
     lw = max(0.85, opts.scale * opts.line_scale)
 
-    body = []
+    shared = styles is not None
+    styles = styles if shared else Styles()
+
+    ops = []
     if opts.background:
-        body.append(f'<rect width="{_n(w)}" height="{_n(h)}" '
-                    f'fill="{opts.background}"/>')
+        ops.append((None, "raw", f'<rect width="{_n(w)}" height="{_n(h)}" '
+                                 f'fill="{opts.background}"/>'))
     for p in prims:
-        _draw(p, opts.scale, ox, oy, lw, body)
+        _draw(p, opts.scale, ox, oy, lw, styles, ops)
 
     if arrows:
         for pl in placements:
             if pl.new and pl.arrow:
-                body += _arrow(pl, view_rot, opts.scale, ox, oy, lw)
+                ops += _arrow(pl, view_rot, opts.scale, ox, oy, lw)
+
+    # A shared stylesheet is emitted once by the caller, and its names are
+    # already unique within that document.  A standalone drawing carries its
+    # own, name-spaced against whatever page it might be pasted into.
+    prefix = "" if shared else styles.prefix()
+    head = "" if shared else f"<style>{styles.css(prefix)}</style>"
+    body = _emit(ops, prefix)
 
     cls = f' class="{class_name}"' if class_name else ""
+    if title:
+        # A drawing carries the half of the instruction the words leave out -
+        # which hole, which way round - so it has to announce itself rather
+        # than be skipped as decoration.  aria-label is what assistive tech
+        # actually reads; the <title> is for anyone opening the .svg directly.
+        head = f"<title>{_xml_escape(title)}</title>" + head
+        a11y = f' role="img" aria-label="{_xml_escape(title)}"'
+    else:
+        a11y = ' role="presentation" aria-hidden="true"'
     # The seam-covering stroke width is the same on every polygon, so it lives
     # on the root and only edges and holes override it.
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {_n(w)} {_n(h)}"'
-        f' width="{_n(w)}" height="{_n(h)}"{cls}'
+        f' width="{_n(w)}" height="{_n(h)}"{cls}{a11y}'
         f' stroke-width="{_n(lw * 0.55)}"'
         f' stroke-linecap="round" stroke-linejoin="round">'
-        + "".join(body)
+        + head + "".join(body)
         + "</svg>"
     )
 
 
-def render_part_icon(name, color=None, rot=None, box_px=54.0, min_px=27.0):
+def _xml_escape(s):
+    """Escape for both element text and attribute values - aria-label is an
+    attribute, so an unescaped quote in a part label would end it early and
+    break the whole drawing."""
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def render_part_icon(name, color=None, rot=None, box_px=54.0, min_px=27.0,
+                     styles=None, title=None):
     """
     A single part on its own, for the parts callout.
 
@@ -367,7 +540,7 @@ def render_part_icon(name, color=None, rot=None, box_px=54.0, min_px=27.0):
     target = min_px + (box_px - min_px) * min(1.0, (extent / 12.0) ** 0.5)
 
     opts = RenderOpts(scale=target / extent, pad=2.0, highlight=False)
-    return render(placement, opts)
+    return render(placement, opts, styles=styles, title=title)
 
 
 def view_rotation(degrees):

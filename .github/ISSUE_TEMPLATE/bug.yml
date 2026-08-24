@@ -1,0 +1,26 @@
+name: Bug report
+description: Report a rendering, checking, or command-line problem
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the command you ran and the result you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: spec
+    attributes:
+      label: Smallest build specification that reproduces it
+      render: python
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: IQDraw and Python versions
+      placeholder: IQDraw 0.3.0, Python 3.11
+    validations:
+      required: true

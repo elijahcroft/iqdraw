@@ -133,10 +133,26 @@ def euler(rx=0.0, ry=0.0, rz=0.0):
     return mat_mul(rot_z(rz), mat_mul(rot_y(ry), rot_x(rx)))
 
 
+def det(m):
+    """Determinant of a 3x3.  Negative means the matrix turns a model over."""
+    return (m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]))
+
+
 @dataclass(frozen=True)
 class Transform:
     rot: tuple = IDENTITY
     pos: tuple = (0.0, 0.0, 0.0)
+
+    def __post_init__(self):
+        # A reflection reverses the winding of every polygon it moves, which
+        # leaves the vertex order disagreeing with the outward normal.  The
+        # renderer happens not to care - it culls and shades from the stored
+        # normal, never from winding - but the primitives put that right as
+        # they transform anyway, so `polygon_normal(f.pts) == f.normal` holds
+        # for every facet in the model whatever moved it there.
+        object.__setattr__(self, "flips", det(self.rot) < 0)
 
     def point(self, p):
         return vadd(mat_apply(self.rot, p), self.pos)
@@ -241,18 +257,23 @@ class Facet:
     normal: tuple = None
     decals: list = field(default_factory=list)
     shade: float = None  # override the computed lambert term
+    shade_normal: tuple = None  # optional smoothed normal; culling stays exact
 
     def __post_init__(self):
         if self.normal is None:
             self.normal = polygon_normal(self.pts)
 
     def xform(self, tf: Transform) -> "Facet":
+        pts = [tf.point(p) for p in self.pts]
+        if tf.flips:
+            pts.reverse()
         return Facet(
-            [tf.point(p) for p in self.pts],
+            pts,
             self.color,
             tf.direction(self.normal),
             [d.xform(tf) for d in self.decals],
             self.shade,
+            tf.direction(self.shade_normal) if self.shade_normal else None,
         )
 
     @property
@@ -278,10 +299,16 @@ class Disc:
             self.normal = vnorm(vcross(self.u, self.v))
 
     def xform(self, tf: Transform) -> "Disc":
+        # Swapping the in-plane axes under a reflection keeps `u x v` equal to
+        # the stored normal, the same invariant `Facet` keeps by reversing its
+        # vertices.  An ellipse is symmetric, so the drawing is unaffected.
+        u, v = tf.direction(self.u), tf.direction(self.v)
+        if tf.flips:
+            u, v = v, u
         return Disc(
             tf.point(self.center),
-            tf.direction(self.u),
-            tf.direction(self.v),
+            u,
+            v,
             self.r,
             self.color,
             tf.direction(self.normal),
@@ -562,6 +589,22 @@ def cylinder(r, z0, z1, color, segments=24, **kw):
 
 # Rotations carrying a locally +z-aligned solid onto a world axis.
 AXIS_ROT = {"z": IDENTITY, "x": rot_y(90), "y": rot_x(-90)}
+
+# Reflections through the plane normal to each axis.  Robots are mostly
+# bilaterally symmetric, so the right-hand side of a build is the left-hand
+# side through `MIRROR_ROT['y']` - which is one placement rather than a second
+# copy of the spec with every y coordinate negated by hand.
+#
+# These are the only matrices here with a negative determinant, and the
+# renderer is fine with that: a facet's outward normal is carried by
+# `tf.direction(normal)`, which stays correct under a reflection, and nothing
+# downstream recomputes a normal from vertex winding.  `test_geom` pins that,
+# because it is the assumption mirroring rests on.
+MIRROR_ROT = {
+    "x": ((-1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+    "y": ((1.0, 0.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),
+    "z": ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, -1.0)),
+}
 
 
 def along(axis, solids, offset=(0.0, 0.0, 0.0)):

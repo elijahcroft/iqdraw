@@ -1,0 +1,22 @@
+name: Part request
+description: Suggest a VEX IQ part for the procedural catalogue
+title: "[Part] "
+labels: [enhancement, part]
+body:
+  - type: input
+    id: part
+    attributes:
+      label: Part name and VEX part number
+    validations:
+      required: true
+  - type: textarea
+    id: use
+    attributes:
+      label: How would teachers use it?
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: Official product or measurement references
+      description: Link references; do not attach proprietary CAD-derived geometry.

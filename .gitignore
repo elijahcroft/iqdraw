@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+out/
+*.html
+
+# Optional private mesh provider. Do not publish third-party CAD-derived data.
+cadmesh.py

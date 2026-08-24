@@ -1,0 +1,42 @@
+# iqdraw is a plain package with no dependencies, so this file exists to make
+# it installable rather than to configure a build.
+#
+# The package directory is also the project root, which is why `package-dir`
+# maps `iqdraw` to ".". This preserves the original import layout while making
+# the standalone repository directly installable.
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iqdraw"
+version = "0.3.0"
+description = "VEX IQ (2nd gen) build instructions, drawn from a text spec"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+keywords = ["vex", "vex-iq", "robotics", "education", "svg", "isometric"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Education",
+    "Programming Language :: Python :: 3",
+    "Topic :: Education",
+    "Topic :: Multimedia :: Graphics :: 3D Rendering",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/elijahcroft/iqdraw"
+Repository = "https://github.com/elijahcroft/iqdraw"
+Issues = "https://github.com/elijahcroft/iqdraw/issues"
+
+[project.scripts]
+iqdraw = "iqdraw.__main__:main"
+
+[tool.setuptools]
+packages = ["iqdraw"]
+package-dir = { iqdraw = "." }
+
+[tool.setuptools.package-data]
+iqdraw = ["README.md"]

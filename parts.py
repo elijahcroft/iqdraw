@@ -22,10 +22,25 @@ then Z), or use `axis:` on the parts that take one.
 
 from __future__ import annotations
 
+import difflib
 import math
 import re
 from dataclasses import dataclass
 
+try:
+    # High-detail meshes are deliberately optional.  The open-source package
+    # ships its own procedural geometry; a local cadmesh.py can add meshes
+    # only when its user has the right to use and redistribute that data.
+    from .cadmesh import cad_mesh, gear_mesh
+    HAS_CAD_MESHES = True
+except ImportError:
+    HAS_CAD_MESHES = False
+
+    def cad_mesh(_key, _color):
+        return None
+
+    def gear_mesh(_key, _color):
+        return None
 from .geom import (
     Disc, Facet, Transform, along, attach, box, circle_profile, cylinder,
     euler, extrude, gear_profile, mix_color, moved, rounded_rect, scale_color,
@@ -47,23 +62,44 @@ HOLE_R = 0.25            # hole radius
 PIN_R = 0.19             # connector-pin radius
 STANDOFF_W = 0.46        # standoff across the flats
 CORNER_R = 0.50          # the rounded end of a beam == half a pitch
+EDGE_BEVEL = 0.055       # molded chamfer around structural-part faces
+HOLE_BEVEL = 0.055       # countersink around each structural hole
 # ============================================================================
 
-# Colours.  CHECK THESE AGAINST YOUR OWN KIT - VEX has changed plastic colours
-# between runs, and a wrong colour actively misleads a student.  Any placement
-# can override with `color:`.
+# Colours.  These follow the VEX IQ (2nd gen) *base* colours that ship in the
+# Starter and Super Kits, so a rendered step matches what a student pulls out
+# of the tray.  Every plastic family is also sold in alternate colours - a
+# placement can override any of them with `color:`.
+#
+#   beams, plates       black           (1x/2x Beam Base Pack, 4x Plate Base Pack)
+#   corner connectors   black           (Corner Connector Base Pack 228-3513)
+#   connector pins      blue            (Connector Pin Pack 228-3058)
+#   standoffs           black           (Standoff Base Pack 228-3514)
+#   metal shafts        zinc-plated steel (Shaft Base Pack 228-3506)
+#   plastic shafts      black           (Plastic Shaft Base Pack 228-3620)
+#   gears               blue            (Gear Base Pack 228-3502)
+#   sprockets + chain   orange          (the colour most kits carry)
+#   tyres               black rubber, on a light grey hub
+#   shaft collars       black rubber
+#   brain, motors, sensors   dark charcoal
+#
+# The hex values themselves are eyeballed from product photography, not
+# sampled from plastic; the *assignment* above is what matters, and it is
+# sourced.  Check them against your own kit - VEX has changed plastic colours
+# between production runs, and a wrong colour actively misleads a student.
 PALETTE = {
-    "white": "#eef0f3",
-    "steel": "#c6cbd2",
-    "grey": "#9ba2ac",
-    "dgrey": "#565d67",
-    "black": "#31353c",
-    "green": "#5cb646",
-    "blue": "#2f8fd6",
-    "orange": "#ef8b26",
-    "red": "#d9483c",
-    "yellow": "#f0c22e",
-    "purple": "#8b62c8",
+    "white": "#eef0f3",      # white-variant packs
+    "steel": "#b9bfc7",      # zinc-plated steel shafts
+    "grey": "#9ba2ac",       # wheel hubs
+    "vexgrey": "#6b7079",    # optional grey structural variant
+    "dgrey": "#4d535c",      # electronics housings
+    "black": "#2b2f35",      # corner connectors, standoffs, tyres, collars
+    "green": "#46a63f",
+    "blue": "#087fc7",       # gears, connector pins
+    "orange": "#f07d18",     # sprockets and chain
+    "red": "#d43f37",
+    "yellow": "#f2c318",
+    "purple": "#7c5ac0",
     "screen": "#2b5f86",
 }
 
@@ -134,6 +170,47 @@ def _annulus(profile, cx, cy, r, z, up, color):
     return out
 
 
+def _loft_ring(lower, upper, z0, z1, color, inward=False):
+    """Join two equal-length profiles with a band of shaded quadrilaterals."""
+    out = []
+    n = len(lower)
+    for k in range(n):
+        a0 = (*lower[k], z0)
+        b0 = (*lower[(k + 1) % n], z0)
+        b1 = (*upper[(k + 1) % n], z1)
+        a1 = (*upper[k], z1)
+        pts = [a0, b0, b1, a1]
+        if inward:
+            pts.reverse()
+        out.append(Facet(pts, color))
+    return out
+
+
+def _hole_chamfer(cx, cy, outer_r, inner_r, z_face, z_bore, up, color):
+    """The small conical lead-in molded around a VEX structural hole."""
+    outer = circle_profile(outer_r, CELL_PTS, cx, cy)
+    inner = circle_profile(inner_r, CELL_PTS, cx, cy)
+    if up > 0:
+        return _loft_ring(outer, inner, z_face, z_bore, color, inward=True)
+    return _loft_ring(inner, outer, z_bore, z_face, color, inward=True)
+
+
+def _cell_profile(i, j, w, length, inset):
+    """A hole cell with only the part's exposed perimeter inset for beveling."""
+    x0 = i - 0.5 + (inset if i == 0 else 0.0)
+    x1 = i + 0.5 - (inset if i == length - 1 else 0.0)
+    y0 = j - 0.5 + (inset if j == 0 else 0.0)
+    y1 = j + 0.5 - (inset if j == w - 1 else 0.0)
+    r = max(0.0, CORNER_R - inset)
+    radii = (
+        r if i == 0 and j == 0 else 0.0,
+        r if i == length - 1 and j == 0 else 0.0,
+        r if i == length - 1 and j == w - 1 else 0.0,
+        r if i == 0 and j == w - 1 else 0.0,
+    )
+    return rounded_rect(x0, y0, x1, y1, radii)
+
+
 def _flat(w, length, t, color, holes=None):
     """
     A beam/plate slab: `length` holes along +x, `w` holes along +y, lying in
@@ -150,25 +227,65 @@ def _flat(w, length, t, color, holes=None):
     }
     bore = mix_color(color, "#1b1f27", 0.66)
 
+    outer = rounded_rect(x0, y0, x1, y1, (CORNER_R,) * 4)
+    inset = rounded_rect(
+        x0 + EDGE_BEVEL, y0 + EDGE_BEVEL,
+        x1 - EDGE_BEVEL, y1 - EDGE_BEVEL,
+        (CORNER_R - EDGE_BEVEL,) * 4,
+    )
+    face = t / 2
+    shoulder = face - EDGE_BEVEL
+    bevel_c = mix_color(color, "#ffffff", 0.09)
+
+    # A VEX beam is injection molded, not a square-edged slab.  Keep the
+    # vertical wall slightly inboard of each face and bridge it with a narrow
+    # chamfer.  The highlight catches like a real CAD model without relying on
+    # SVG gradients or a particular output resolution.
     prims = extrude(
-        rounded_rect(x0, y0, x1, y1, (CORNER_R,) * 4),
-        -t / 2, t / 2, color,
+        outer, -shoulder, shoulder, color,
         cap_top=False, cap_bottom=False, rim_top=True, rim_bottom=True,
     )
+    prims += _loft_ring(outer, inset, shoulder, face, bevel_c)
+    prims += _loft_ring(inset, outer, -face, -shoulder, color)
 
-    eps = 1e-9
+    # The pitch marks/notches along a genuine IQ beam's side are visible even
+    # in VEX's simplified parts poster.  Subtle recessed rectangles make a
+    # long black beam readable as molded IQ structure instead of a plain bar.
+    groove_c = mix_color(color, "#11151b", 0.58)
+    notch_w = 0.13
+    notch_z = min(t * 0.27, 0.12)
+    for i in range(length - 1):
+        x = i + 0.5
+        prims.append(Facet(
+            [(x - notch_w, y1 + 0.002, -notch_z),
+             (x + notch_w, y1 + 0.002, -notch_z),
+             (x + notch_w, y1 + 0.002, notch_z),
+             (x - notch_w, y1 + 0.002, notch_z)],
+            groove_c, (0.0, 1.0, 0.0)))
+        prims.append(Facet(
+            [(x + notch_w, y0 - 0.002, -notch_z),
+             (x - notch_w, y0 - 0.002, -notch_z),
+             (x - notch_w, y0 - 0.002, notch_z),
+             (x + notch_w, y0 - 0.002, notch_z)],
+            groove_c, (0.0, -1.0, 0.0)))
+    for j in range(w - 1):
+        y = j + 0.5
+        prims.append(Facet(
+            [(x1 + 0.002, y + notch_w, -notch_z),
+             (x1 + 0.002, y - notch_w, -notch_z),
+             (x1 + 0.002, y - notch_w, notch_z),
+             (x1 + 0.002, y + notch_w, notch_z)],
+            groove_c, (1.0, 0.0, 0.0)))
+        prims.append(Facet(
+            [(x0 - 0.002, y - notch_w, -notch_z),
+             (x0 - 0.002, y + notch_w, -notch_z),
+             (x0 - 0.002, y + notch_w, notch_z),
+             (x0 - 0.002, y - notch_w, notch_z)],
+            groove_c, (-1.0, 0.0, 0.0)))
+
     for i in range(length):
         for j in range(w):
-            cx0, cy0, cx1, cy1 = i - 0.5, j - 0.5, i + 0.5, j + 0.5
-            at_x0, at_x1 = abs(cx0 - x0) < eps, abs(cx1 - x1) < eps
-            at_y0, at_y1 = abs(cy0 - y0) < eps, abs(cy1 - y1) < eps
-            radii = (
-                CORNER_R if (at_x0 and at_y0) else 0.0,
-                CORNER_R if (at_x1 and at_y0) else 0.0,
-                CORNER_R if (at_x1 and at_y1) else 0.0,
-                CORNER_R if (at_x0 and at_y1) else 0.0,
-            )
-            cell = rounded_rect(cx0, cy0, cx1, cy1, radii)
+            cell = _cell_profile(i, j, w, length, EDGE_BEVEL)
 
             if (i, j) not in drilled:
                 prims.append(Facet([(x, y, t / 2) for x, y in cell], color,
@@ -178,17 +295,22 @@ def _flat(w, length, t, color, holes=None):
                 continue
 
             ring = _resample(cell, CELL_PTS)
-            prims += _annulus(ring, i, j, HOLE_R, t / 2, +1, color)
-            prims += _annulus(ring, i, j, HOLE_R, -t / 2, -1, color)
+            mouth_r = HOLE_R + HOLE_BEVEL
+            prims += _annulus(ring, i, j, mouth_r, face, +1, color)
+            prims += _annulus(ring, i, j, mouth_r, -face, -1, color)
+            prims += _hole_chamfer(i, j, mouth_r, HOLE_R, face, shoulder,
+                                   +1, bevel_c)
+            prims += _hole_chamfer(i, j, mouth_r, HOLE_R, -face, -shoulder,
+                                   -1, color)
             # Looking down a hole at this angle you see its far inner wall, so
             # the bore needs an inward-facing cylinder - a dark disc at the
             # bottom projects below the opening and never lines up with it.
             # Reversing the profile flips the wall normals to point inward.
             disc = circle_profile(HOLE_R, 12, i, j)
-            prims += extrude(list(reversed(disc)), -t / 2, t / 2, bore,
+            prims += extrude(list(reversed(disc)), -shoulder, shoulder, bore,
                              cap_top=False, cap_bottom=False, edges=False,
                              zcell=t)  # too short to need banding
-            prims.append(Facet([(x, y, -t / 2) for x, y in disc], bore,
+            prims.append(Facet([(x, y, -shoulder) for x, y in disc], bore,
                                (0.0, 0.0, 1.0)))
     return prims, tuple(sorted(drilled))
 
@@ -212,10 +334,69 @@ def _painted_hole(x, y, z, up, base):
     ]
 
 
+def _attach_face_details(prims, details, up=1):
+    """Draw broad face markings after every cap cell they can overlap."""
+    caps = [p for p in prims
+            if isinstance(p, Facet) and p.normal[2] * up > 0.9]
+    if not caps:
+        return prims
+    zmax = max(f.pts[0][2] * up for f in caps)
+    caps = [f for f in caps if abs(f.pts[0][2] * up - zmax) < 1e-9]
+    # Gear holes span several of the radial triangles used to depth-sort the
+    # large face.  Parking them on the foremost cap keeps neighbouring cap
+    # cells from clipping them into crescents.
+    host = max(caps, key=lambda f: sum(
+        (x + y + z) / len(f.pts) for x, y, z in f.pts
+    ) * up)
+    host.decals = list(host.decals) + list(details)
+    return prims
+
+
 def _square_bar(across, z0, z1, color, corner=0.06):
     prof = rounded_rect(-across / 2, -across / 2, across / 2, across / 2,
                         (corner,) * 4)
     return extrude(prof, z0, z1, color)
+
+
+def _gear_holes(teeth):
+    """Official VEX spur-gear lightening-hole layouts, in pitch units."""
+    if teeth == 36:
+        return [
+            (0.80 * math.cos(math.radians(a)),
+             0.80 * math.sin(math.radians(a)))
+            for a in range(0, 360, 45)
+        ]
+    if teeth == 48:
+        # The 48T face uses a staggered 3-2-2-2-3 arrangement.
+        return [
+            (-1.0, -1.0), (0.0, -1.0), (1.0, -1.0),
+            (-0.5, -0.5), (0.5, -0.5),
+            (-1.0, 0.0), (1.0, 0.0),
+            (-0.5, 0.5), (0.5, 0.5),
+            (-1.0, 1.0), (0.0, 1.0), (1.0, 1.0),
+        ]
+    if teeth >= 60:
+        holes = []
+        for radius, offset in ((0.88, 0.0), (1.78, 0.0)):
+            holes += [
+                (radius * math.cos(math.radians(a + offset)),
+                 radius * math.sin(math.radians(a + offset)))
+                for a in range(0, 360, 45)
+            ]
+        return holes
+    return []
+
+
+def _gear_slot(angle, radius, length, width, z, color):
+    """A tangential molded slot used on the classic VEX IQ 60T gear."""
+    prof = rounded_rect(-length / 2, -width / 2,
+                        length / 2, width / 2,
+                        (width / 2,) * 4, segments=4)
+    pts = [(x, y, z) for x, y in prof]
+    tf = Transform(euler(rz=angle + 90),
+                   (radius * math.cos(math.radians(angle)),
+                    radius * math.sin(math.radians(angle)), 0.0))
+    return Facet([tf.point(p) for p in pts], color, (0.0, 0.0, 1.0))
 
 
 def _bore_decal(z, up, r, color, square=False):
@@ -236,6 +417,11 @@ def _bore_decal(z, up, r, color, square=False):
 
 
 def _beam(w, length, color):
+    official = _official(cad_mesh, f"beam_{w}x{length}", color)
+    if official is not None:
+        holes = tuple((x, y) for x in range(length) for y in range(w))
+        return Part(f"beam_{w}x{length}", f"{w}x{length} Beam", color,
+                    official, holes)
     prims, holes = _flat(w, length, BEAM_T, color)
     return Part(f"beam_{w}x{length}", f"{w}x{length} Beam", color, prims, holes)
 
@@ -283,32 +469,55 @@ def _gear(teeth, color):
     pitch radius of teeth/24, so 12T (r=0.5) and 36T (r=1.5) mesh exactly 2
     holes apart, 12T and 60T exactly 3 apart, and so on.
     """
+    official = _official(gear_mesh, teeth, color)
+    if official is not None:
+        return Part(f"gear_{teeth}", f"{teeth}-Tooth Gear", color,
+                    official, icon_rot=FACE_CAMERA)
+
     r = teeth / 24.0
     t = 0.40
     hz = t / 2 + 0.20
-    hub_r = min(0.40, r * 0.72)
-    hub_c = mix_color(color, "#3c424b", 0.55)
+    hub_r = min(0.38, r * 0.72)
+    hub_c = mix_color(color, "#173d59", 0.11)
     p = extrude(gear_profile(teeth, r), -t / 2, t / 2, color)
-    hub_up = attach(cylinder(hub_r, t / 2, hz, hub_c, segments=22),
+
+    # VEX's spur gears are solid molded faces with round lightening holes.
+    # Their layout is one of the quickest visual identifiers for the real
+    # pieces: eight around a 36T, and two rings of eight on the classic 60T.
+    hole_decals = []
+    for x, y in _gear_holes(teeth):
+        hole_decals += _painted_hole(x, y, t / 2, +1, color)
+    if teeth >= 60:
+        slot_c = mix_color(color, "#10151c", 0.82)
+        hole_decals += [
+            _gear_slot(a, 1.43, 0.72, 0.13, t / 2, slot_c)
+            for a in (45, 135, 225, 315)
+        ]
+    _attach_face_details(p, hole_decals, +1)
+
+    hub_up = attach(cylinder(hub_r, t / 2, hz, hub_c, segments=24),
                     _bore_decal(hz, +1, 0.0, hub_c, square=True), +1)
-    hub_dn = attach(cylinder(hub_r, -hz, -t / 2, hub_c, segments=22),
+    hub_dn = attach(cylinder(hub_r, -hz, -t / 2, hub_c, segments=24),
                     _bore_decal(-hz, -1, 0.0, hub_c, square=True), -1)
     return Part(f"gear_{teeth}", f"{teeth}-Tooth Gear", color,
                 p + hub_up + hub_dn, icon_rot=FACE_CAMERA)
 
 
-def _wheel(dia_mm, color):
-    r = dia_mm / PITCH_MM / 2.0
+def _wheel(travel_mm, color):
+    # VEX names its IQ wheels by TRAVEL PER REVOLUTION, not by diameter - a
+    # "200mm wheel" rolls 200 mm per turn, so it is 200/pi = 63.7 mm across.
+    # Taking the name as a diameter draws every wheel pi times too big.
+    r = travel_mm / math.pi / PITCH_MM / 2.0
     width = 0.95
-    hub_c = PALETTE["steel"]
+    hub_c = PALETTE["white"]  # light-grey hub, so it reads against a black tyre
     zc = width / 2 + 0.16
     p = cylinder(r, -width / 2, width / 2, color, segments=36)          # tread
     p += cylinder(r * 0.93, -width / 2 - 0.04, width / 2 + 0.04, color, segments=36)
-    p += cylinder(r * 0.58, -width / 2 - 0.06, width / 2 + 0.06, hub_c, segments=30)
+    p += cylinder(r * 0.69, -width / 2 - 0.14, width / 2 + 0.14, hub_c, segments=30)
     boss = attach(cylinder(0.42, -zc, zc, hub_c, segments=22),
                   _bore_decal(zc, +1, 0.0, hub_c, square=True), +1)
     attach(boss, _bore_decal(-zc, -1, 0.0, hub_c, square=True), -1)
-    return Part(f"wheel_{dia_mm}", f"{dia_mm}mm Wheel", color, p + boss,
+    return Part(f"wheel_{travel_mm}", f"{travel_mm}mm Travel Wheel", color, p + boss,
                 icon_rot=(90.0, 0.0, 0.0))
 
 
@@ -349,7 +558,7 @@ def _motor(color):
     VEX IQ Smart Motor.  Proportions are eyeballed to be recognisable at a
     glance, not dimensionally exact - swap this function if you need accuracy.
     """
-    trim = PALETTE["dgrey"]
+    trim = PALETTE["black"]
     body = box(-0.5, -0.5, -0.5, 2.5, 1.5, 0.9, color)
     # Mounting holes ride on the body lid as decals so they can never be
     # painted over by the very facet they belong to.
@@ -363,7 +572,7 @@ def _motor(color):
     p += box(-0.62, -0.36, -0.36, -0.5, 1.36, 0.76, trim)           # cable end
     p += along("x", cylinder(0.42, 0.0, 0.32, trim, segments=22),
                (2.5, 0.5, 0.2))                                      # shaft boss
-    p += along("x", _square_bar(SHAFT_W, 0.0, 0.75, PALETTE["black"]),
+    p += along("x", _square_bar(SHAFT_W, 0.0, 0.75, PALETTE["steel"]),
                (2.5, 0.5, 0.2))                                      # output shaft
     return Part("motor", "Smart Motor", color, p,
                 tuple((i, j, 0.0) for i in range(3) for j in range(2)))
@@ -372,7 +581,7 @@ def _motor(color):
 def _brain(color):
     """VEX IQ (2nd gen) Robot Brain - recognisable proportions, not exact."""
     screen_c = PALETTE["screen"]
-    trim = PALETTE["dgrey"]
+    trim = PALETTE["black"]
     # Roughly 110 x 85 mm, which is about 8 x 6 holes.
     body = box(-0.5, -0.5, -0.5, 7.5, 5.5, 0.9, color)
     # The screen is a raised solid, not a decal.  A decal rides on one lid
@@ -395,7 +604,7 @@ def _bumper(color):
 
 
 def _distance(color):
-    lens = PALETTE["dgrey"]
+    lens = PALETTE["black"]
     p = box(-0.5, -0.5, -0.4, 1.5, 0.9, 0.6, color)
     for x in (0.05, 0.95):
         p += along("y", cylinder(0.24, 0.0, 0.12, lens, segments=20),
@@ -405,7 +614,7 @@ def _distance(color):
 
 def _battery(color):
     p = box(-0.5, -0.5, -0.5, 3.5, 2.5, 0.6, color)
-    p += box(3.5, 0.4, -0.2, 3.7, 1.6, 0.3, PALETTE["dgrey"])
+    p += box(3.5, 0.4, -0.2, 3.7, 1.6, 0.3, PALETTE["black"])
     return Part("battery", "Robot Battery", color, p)
 
 
@@ -426,11 +635,11 @@ def _rubber_band(length, color):
 # ------------------------------------------------------------------- registry
 
 _DEFAULT_COLOR = {
-    "beam": "white", "plate": "white", "corner": "white",
-    "pin": "green", "shaft": "dgrey", "standoff": "steel",
-    "gear": "grey", "wheel": "black", "collar": "dgrey",
-    "spacer": "steel", "washer": "steel", "motor": "white",
-    "brain": "black", "bumper": "white", "distance": "white",
+    "beam": "black", "plate": "black", "corner": "black",
+    "pin": "blue", "shaft": "steel", "standoff": "black",
+    "gear": "blue", "wheel": "black", "collar": "black",
+    "spacer": "white", "washer": "white", "motor": "dgrey",
+    "brain": "dgrey", "bumper": "dgrey", "distance": "dgrey",
     "battery": "dgrey", "band": "green",
 }
 
@@ -447,7 +656,7 @@ _RULES = [
     (re.compile(r"^wheel_(\d+)$"), lambda m, c: _wheel(int(m[1]), c)),
     (re.compile(r"^band_(\d+)$"), lambda m, c: _rubber_band(int(m[1]), c)),
     (re.compile(r"^collar$"), lambda m, c: _collar(c)),
-    (re.compile(r"^spacer$"), lambda m, c: _spacer(0.35, c)),
+    (re.compile(r"^spacer$"), lambda m, c: _spacer(0.25, c)),
     (re.compile(r"^washer$"), lambda m, c: _spacer(0.12, c)),
     (re.compile(r"^motor$"), lambda m, c: _motor(c)),
     (re.compile(r"^brain$"), lambda m, c: _brain(c)),
@@ -456,12 +665,51 @@ _RULES = [
     (re.compile(r"^battery$"), lambda m, c: _battery(c)),
 ]
 
+# How much geometry a part carries.
+#
+#   "cad"     optional local meshes, where one exists: molded ribs, real
+#             tooth profiles, recessed faces. Falls back to simple geometry.
+#   "simple"  the procedural approximations underneath.  Roughly a quarter of
+#             the file size and noticeably plainer - worth it for a build that
+#             has to load over a slow connection or go out by email.
+#
+# Every part has a procedural form; "cad" only overrides parts supplied by an
+# optional local mesh module, so no proprietary data is required.
+DETAIL_LEVELS = ("cad", "simple")
+_detail = "simple"
+
 _cache = {}
 
 
-def get(name, color=None):
-    """Build (and cache) a part by name.  `color` overrides the default."""
-    key = (name, color)
+def set_detail(level):
+    """Choose the geometry detail level.  Clears the part cache."""
+    global _detail
+    if level not in DETAIL_LEVELS:
+        raise ValueError(f"detail must be one of {DETAIL_LEVELS}, got {level!r}")
+    _detail = level
+    _cache.clear()
+
+
+def detail():
+    return _detail
+
+
+def _official(fetch, key, color):
+    """An optional local CAD mesh for `key`, or None if off or absent."""
+    return None if _detail == "simple" else fetch(key, color)
+
+
+def get(name, color=None, detail=None):
+    """
+    Build (and cache) a part by name.  `color` overrides the default.
+
+    `detail` overrides the global detail level for this one part, which is
+    how a booklet can draw the step's new parts from optional local meshes and
+    everything already built from the included procedural shapes.
+    """
+    global _detail
+    level = detail or _detail
+    key = (name, color, level)
     if key in _cache:
         return _cache[key]
     family = name.split("_")[0]
@@ -469,13 +717,40 @@ def get(name, color=None):
     for pattern, make in _RULES:
         m = pattern.match(name)
         if m:
-            part = make(m, resolved)
+            # The builders read the module-level detail rather than taking it
+            # as an argument, so swap it for the duration of this one build.
+            was, _detail = _detail, level
+            try:
+                part = make(m, resolved)
+            finally:
+                _detail = was
             _cache[key] = part
             return part
-    raise KeyError(
-        f"unknown part {name!r}. Known families: "
-        + ", ".join(sorted(_DEFAULT_COLOR))
-    )
+    raise UnknownPart(name)
+
+
+class UnknownPart(Exception):
+    """
+    A part name no rule matches.
+
+    Carries a suggestion, because the overwhelmingly common cause is a size
+    that does not exist rather than a family that does not - `beam_1x9` when
+    the kit has a 1x8, `gear_35` for a 36.  Guessing blindly at the catalogue
+    is exactly the dead end this is meant to save.
+    """
+
+    def __init__(self, name):
+        self.name = name
+        family = name.split("_")[0]
+        if family in _DEFAULT_COLOR:
+            hint = (f"{family!r} is a known family, so the size is the "
+                    f"problem - check {name.split('_', 1)[-1]!r} against a "
+                    f"real part")
+        else:
+            near = difflib.get_close_matches(family, _DEFAULT_COLOR, 1, 0.6)
+            hint = (f"did you mean {near[0]!r}?" if near else
+                    "known families: " + ", ".join(sorted(_DEFAULT_COLOR)))
+        super().__init__(f"unknown part {name!r} - {hint}")
 
 
 def known_families():
