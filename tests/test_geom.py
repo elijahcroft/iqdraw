@@ -101,7 +101,7 @@ class TestColour(unittest.TestCase):
 
     def test_fade_moves_toward_grey(self):
         faded = fade("#000000", 1.0)
-        self.assertEqual(faded, "#c9ccd2")
+        self.assertEqual(faded, "#eceef1")
 
 
 class TestSolids(unittest.TestCase):

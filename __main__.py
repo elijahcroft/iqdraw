@@ -93,10 +93,10 @@ def main(argv=None):
                     help="also rasterise each step to .png (needs rsvg-convert)")
     ap.add_argument("--no-hero", action="store_true",
                     help="skip the finished-model image on the cover")
-    ap.add_argument("--detail", choices=parts.DETAIL_LEVELS, default="simple",
-                    help="geometry detail: 'simple' uses the included "
-                         "procedural shapes (default); 'cad' uses optional "
-                         "local meshes when available")
+    ap.add_argument("--detail", choices=parts.DETAIL_LEVELS, default="cad",
+                    help="geometry detail: 'cad' uses the bundled official VEX "
+                         "meshes (default), 'simple' the procedural shapes, for "
+                         "a file about a quarter the size")
     ap.add_argument("--context-detail", choices=parts.DETAIL_LEVELS,
                     help="geometry detail for the parts already built, drawn "
                          "washed out behind the step's own. 'simple' is about "

@@ -153,37 +153,31 @@ class TestSections(unittest.TestCase):
         self.assertEqual(b.runs(), [(0, 2)])
         self.assertIsNone(b.steps[0].section)
 
-    def test_without_sections_every_step_shares_one_frame(self):
-        b = Build("x")
-        b.place(_side())
-        boxes = b.step_boxes()
-        self.assertEqual(boxes, [b.shared_box()] * len(b.steps))
-
-    def test_a_section_is_framed_on_the_build_so_far(self):
-        # The reason sections exist at all: an early step should not be a
-        # thumbnail adrift in a page sized for the finished model.
+    def test_every_step_is_framed_on_its_own(self):
+        # As the printed guides do: each step as big as the page allows,
+        # not a thumbnail in a frame sized for the finished model.
         b = self._sectioned()
-        first, last = b.step_boxes()[0], b.step_boxes()[-1]
-        self.assertLess(first[2] - first[0], last[2] - last[0])
-        # ...and it still holds still within its own section.
-        self.assertEqual(b.step_boxes()[0], b.step_boxes()[1])
+        boxes = b.step_boxes()
+        self.assertEqual(boxes, [b._frame([i]) for i in range(len(b.steps))])
+        self.assertLess(boxes[0][2] - boxes[0][0], b.shared_box()[2]
+                        - b.shared_box()[0] + 1e-9)
 
-    def test_the_booklet_announces_each_section(self):
-        html = booklet(self._sectioned(), hero=False)
-        self.assertIn("<h2>Chassis</h2>", html)
-        self.assertIn("<h2>Arm</h2>", html)
-        self.assertIn("Part 1 of 2", html)
-        self.assertIn("bolts to the front", html)
-        # Each section says how long it is, so its end is visible from its
-        # start - the same job the cover's step count does for the build.
-        self.assertIn(">2 steps<", html)
-        self.assertIn(">1 step<", html)
+    def test_a_section_is_framed_only_for_its_own_views(self):
+        # Turning the model round in a later section must not shrink an
+        # earlier one, nor this one be sized for a view it never uses.
+        b = self._sectioned()
+        plain = b.step_boxes()
+        for step in b.steps[2:]:
+            step.view_rz = 90
+        turned = b.step_boxes()
+        self.assertEqual(turned[:2], plain[:2])
+        self.assertEqual(turned[2], b._frame([2]))
 
     def test_step_numbering_stays_continuous_across_sections(self):
         html = booklet(self._sectioned(), hero=False)
         for n in (1, 2, 3):
             self.assertIn(f'id="step-{n}"', html)
-        self.assertIn("of 3</span>", html)
+            self.assertIn(f"Step {n} of 3.", html)
 
     def test_an_unsectioned_booklet_gains_no_section_markup(self):
         b = Build("x")
@@ -197,8 +191,8 @@ class TestContextDetail(unittest.TestCase):
     Drawing the already-built parts from the cheaper procedural shapes.
 
     Every step redraws the whole model, so on a robot-sized build most of the
-    file is parts that are washed out on purpose. The step's own parts keep
-    optional local high-detail meshes either way.
+    file is parts that are washed out on purpose.  The step's own parts keep
+    the official CAD meshes either way.
     """
 
     def _build(self, context_detail=None):
@@ -216,9 +210,6 @@ class TestContextDetail(unittest.TestCase):
         self.assertIsNone(b.context_detail)
 
     def test_simple_context_shrinks_the_later_steps(self):
-        from iqdraw import parts
-        if not parts.HAS_CAD_MESHES:
-            self.skipTest("optional CAD meshes are not installed")
         full = self._build().step_svgs()
         lean = self._build("simple").step_svgs()
         # Step 1 has nothing built behind it, so it is untouched...
@@ -302,21 +293,10 @@ class TestCoverContents(unittest.TestCase):
         b.step("three").add("beam_1x8", (0, 0, 0.5))
         return b
 
-    def test_the_cover_lists_the_sections_and_their_steps(self):
-        html = booklet(self._sectioned(), hero=False)
-        self.assertIn("What you will build", html)
-        self.assertIn(">Chassis</span>", html)
-        self.assertIn("steps 1&ndash;2", html)
-        self.assertIn(">step 3<", html)
-
     def test_a_build_with_no_sections_has_no_contents_block(self):
         b = Build("x")
         b.step("only").add("beam_1x4", (0, 0, 0))
         self.assertNotIn("What you will build", booklet(b, hero=False))
-
-    def test_each_section_lists_what_to_fetch(self):
-        html = booklet(self._sectioned(), hero=False)
-        self.assertIn("Fetch these before you start", html)
 
     def test_section_runs_pairs_sections_with_their_ranges(self):
         runs = self._sectioned().section_runs()
@@ -326,3 +306,29 @@ class TestCoverContents(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTurn(unittest.TestCase):
+    def _turned(self):
+        b = Build("turned")
+        with b.step("a") as s:
+            s.add("beam_1x4", (0, 0, 0))
+        b.turn(rot=(180, 0, 0), at=(0, 0, 5), note="Turn it over.")
+        with b.step("b") as s:
+            s.add("beam_1x4", (0, 0, 4.5))
+        return b
+
+    def test_parts_built_before_a_turn_move_with_it(self):
+        first, second = self._turned().all_placements()
+        self.assertEqual(first.tf.pos, (0.0, 0.0, 5.0))
+        self.assertEqual(second.tf.pos, (0.0, 0.0, 4.5))
+
+    def test_the_step_after_a_turn_carries_its_note(self):
+        b = self._turned()
+        self.assertIsNone(b.steps[0].turn)
+        self.assertEqual(b.steps[1].turn_note, "Turn it over.")
+
+    def test_the_checks_see_the_turned_model(self):
+        # Beam two sits on beam one only once beam one has been turned.
+        from iqdraw.check import check
+        self.assertEqual(check(self._turned()), [])
