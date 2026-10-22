@@ -28,6 +28,14 @@ DECAL_BIAS = 0.01 # pitch toward the camera, so a hole drawn on a face wins over
 CREASE = 0.55     # neighbouring normals less alike than this draw a crease line
 CREASE_DARKEN = 0.62
 SILHOUETTE_DARKEN = 0.30
+DESATURATE = 0.15 # pull lit colours this far toward grey, like a CAD viewport
+AO_RADIUS = 0.35  # pitch around a pixel looked at for nearer surfaces
+AO_DEPTH = 0.30   # how far nearer (in depth) counts as fully occluded
+AO_STRENGTH = 0.35
+SHADOW_DROP = 0.35   # pitch the soft shadow sits below the model on screen
+SHADOW_BLUR = 0.45   # pitch it is softened over
+SHADOW_ALPHA = 0.16
+SHADOW_RGB = (26.0, 30.0, 38.0)
 
 
 def _ring(d, segments):
@@ -82,7 +90,8 @@ def _triangles(prims):
 
 
 def rasterize(prims, scale, ox, oy, width, height, line_px, background=None,
-              lines=(), line_rgb=(0, 0, 0), ring_rgb=None, ring_w=1.0):
+              lines=(), line_rgb=(0, 0, 0), ring_rgb=None, ring_w=1.0,
+              margin=0.0):
     """
     Draw `prims` into a `width` x `height` (SVG units) image and return PNG
     bytes.  `scale`, `ox` and `oy` map projected pitch to SVG units, exactly
@@ -94,6 +103,9 @@ def rasterize(prims, scale, ox, oy, width, height, line_px, background=None,
 
     `ring_rgb` draws a line that colour round the step's new parts, the way
     the printed guides pick them out, instead of washing the rest out.
+
+    `margin` is the empty border (SVG units) round the model; the soft shadow
+    is kept inside it so it is never cut off at the image's edge.
     """
     import numpy as np
 
@@ -178,18 +190,23 @@ def rasterize(prims, scale, ox, oy, width, height, line_px, background=None,
         line = grown
 
     alpha = covered | line
-    out = col.copy()
+    grey = col @ np.array([0.299, 0.587, 0.114], np.float32)
+    out = col + (grey[..., None] - col) * DESATURATE
+    out *= _occlusion(z, nrm, covered, scale * k)[..., None]
     out[crease & ~line] *= CREASE_DARKEN
     out[line] = line_col[line]
     if ring_rgb is not None and lit.any():
         _ring_new(lit & covered, np.where(covered, pid, -1), out, alpha, ring_rgb,
                   line_px * k * RING_WIDTH * ring_w)
     _guides(lines, line_rgb, z, out, alpha, scale, ox, oy, k, line_px * k * 1.7)
+    shadow = _shadow(covered, scale * k, margin * k) * ~alpha
+    out[~alpha] = SHADOW_RGB
     if background:
         bg = np.array(hex_to_rgb(background), np.float32)
-        out[~alpha] = bg
-        alpha[:] = True
-    rgba = np.concatenate([out, alpha[..., None].astype(np.float32) * 255.0], axis=-1)
+        out[~alpha] = bg + (np.array(SHADOW_RGB, np.float32) - bg) * shadow[~alpha, None]
+        shadow[:] = 1.0
+    cover = np.where(alpha, 1.0, shadow).astype(np.float32)
+    rgba = np.concatenate([out, cover[..., None] * 255.0], axis=-1)
     # Average each supersample block; colour is premultiplied by coverage first
     # so an edge pixel blends toward transparent rather than toward black.
     rgba[..., :3] *= rgba[..., 3:] / 255.0
@@ -198,6 +215,71 @@ def rasterize(prims, scale, ox, oy, width, height, line_px, background=None,
     a = rgba[..., 3:]
     rgba[..., :3] = np.where(a > 0, rgba[..., :3] * 255.0 / np.maximum(a, 1e-6), 0)
     return _png(np.clip(np.rint(rgba), 0, 255).astype(np.uint8))
+
+
+def _blur(a, r):
+    """Two passes of a (2r+1)-wide box mean, zero outside the image."""
+    import numpy as np
+
+    n = 2 * r + 1
+    for _ in range(2):
+        s = np.zeros((a.shape[0] + n, a.shape[1] + n))
+        s[1:, 1:] = np.pad(a, r).cumsum(0).cumsum(1)
+        a = (s[n:, n:] - s[:-n, n:] - s[n:, :-n] + s[:-n, :-n]) / (n * n)
+    return a
+
+
+# (x, y, z) -> (screen x, screen y, depth), all in pitch; see geom.project
+_TO_SCREEN = ((math.sqrt(3) / 2, -math.sqrt(3) / 2, 0.0),
+              (0.5, 0.5, -1.0),
+              (1.0, 1.0, 1.0))
+
+
+def _occlusion(z, nrm, covered, px):
+    """
+    How much light each pixel keeps, 1 - AO_STRENGTH at most: darker where
+    the surfaces round it stand nearer than its own face would - inside a
+    hole, under a ledge, in the corner where two parts meet.  Each pixel's
+    neighbourhood is compared against the plane of its own face, so a flat
+    face, however slanted, is left alone, and so are its edges.
+    `px` is raster pixels per pitch.
+    """
+    import numpy as np
+
+    r = max(1, int(round(AO_RADIUS * px / 2)))   # two passes reach 2r
+    m = covered.astype(np.float64)
+    seen = np.maximum(_blur(m, r), 1e-6)
+    ys, xs = np.indices(z.shape, dtype=np.float64)
+    mean_z = _blur(np.where(covered, z, 0.0), r) / seen
+    dx = _blur(m * xs, r) / seen - xs
+    dy = _blur(m * ys, r) / seen - ys
+    # The face's plane as depth over screen position: its normal through the
+    # inverse of the projection.
+    g = nrm.astype(np.float64) @ np.linalg.inv(np.array(_TO_SCREEN))
+    facing = covered & (np.abs(g[..., 2]) > 0.05)
+    gz = np.where(facing, g[..., 2], 1.0)
+    plane = -(g[..., 0] * dx + g[..., 1] * dy) / gz / px
+    occ = np.clip((mean_z - z - plane) / AO_DEPTH, 0.0, 1.0) * facing
+    return (1.0 - AO_STRENGTH * occ).astype(np.float32)
+
+
+def _shadow(covered, px, margin_px):
+    """
+    A soft shadow under the model, 0..SHADOW_ALPHA: its silhouette dropped a
+    little and blurred, scaled down to fit the `margin_px` border.
+    """
+    import numpy as np
+
+    drop, soft = SHADOW_DROP * px, SHADOW_BLUR * px
+    reach = drop + soft           # two passes of soft / 2
+    if reach > 0.8 * margin_px:
+        drop, soft = (v * 0.8 * margin_px / reach for v in (drop, soft))
+    drop, r = int(round(drop)), int(round(soft / 2))
+    if r < 1:
+        return np.zeros(covered.shape, np.float32)
+    dropped = np.zeros(covered.shape)
+    dropped[drop:] = covered[:covered.shape[0] - drop]
+    return (_blur(dropped, r) * SHADOW_ALPHA).astype(np.float32)
 
 
 RING_WIDTH = 2.2   # the line round new parts, against an outline

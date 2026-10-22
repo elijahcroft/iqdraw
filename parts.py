@@ -83,8 +83,8 @@ HOLE_BEVEL = 0.055       # countersink around each structural hole
 PALETTE = {
     "white": "#eef0f3",      # white-variant packs
     "steel": "#b9bfc7",      # zinc-plated steel shafts
-    "guide": "#8b8a90",      # beams, plates, corners - sampled so a lit face
-                             # lands on the #8d8c92 VEX's build guides use
+    "guide": "#8b8a90",      # beams, plates, corners - sampled from the
+                             # #8d8c92 VEX's build guides use
     "grey": "#cfd0d4",       # wheel hubs
     "vexgrey": "#6b7079",    # optional grey structural variant
     "dgrey": "#4d535c",      # electronics housings

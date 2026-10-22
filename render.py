@@ -19,7 +19,7 @@ from .geom import (
     hex_to_rgb, project, rot_z, vadd, vdot, vlen, vmul, vnorm, vsub,
 )
 from .parts import Part, get
-from .raster import rasterize
+from .raster import SHADOW_BLUR, SHADOW_DROP, rasterize
 
 # A crease is only drawn when the two faces meeting there differ by more than
 # this.  Keeps tessellated cylinders from turning into wireframe.
@@ -490,9 +490,12 @@ def render(placements, opts: RenderOpts, view_rot=IDENTITY, box=None,
     world = world_prims(placements, opts, view_rot)
     b = box or bounds(visible(world), opts)
     x0, y0, x1, y1 = b
-    w = (x1 - x0) * opts.scale + 2 * opts.pad
-    h = (y1 - y0) * opts.scale + 2 * opts.pad
-    ox = -x0 * opts.scale + opts.pad
+    # Room below and to the sides for the soft shadow, where the margin is
+    # too narrow to hold it.
+    room = max(0.0, (SHADOW_DROP + SHADOW_BLUR) * opts.scale - opts.pad)
+    w = (x1 - x0) * opts.scale + 2 * (opts.pad + room)
+    h = (y1 - y0) * opts.scale + 2 * opts.pad + room
+    ox = -x0 * opts.scale + opts.pad + room
     oy = -y0 * opts.scale + opts.pad
     lw = max(0.85, opts.scale * opts.line_scale)
 
@@ -504,7 +507,7 @@ def render(placements, opts: RenderOpts, view_rot=IDENTITY, box=None,
                     lines=lines,
                     line_rgb=hex_to_rgb(opts.guide or GUIDE_COLOR),
                     ring_rgb=hex_to_rgb(opts.ring) if opts.ring else None,
-                    ring_w=opts.ring_w)
+                    ring_w=opts.ring_w, margin=opts.pad + room)
     body = [f'<image width="{_n(w)}" height="{_n(h)}" href="data:image/png;'
             f'base64,{base64.b64encode(png).decode("ascii")}"/>']
 

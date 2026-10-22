@@ -188,13 +188,14 @@ def depth(p):
 VIEW = vnorm((1.0, 1.0, 1.0))
 
 # -------------------------------------------------------------------- shading
-# Soft and flat, like VEX's build-guide renders: a +z face reads 1.02, +x
-# 0.80, +y 0.72, and any face turned away sits on the ambient floor.  Raise
-# GAIN for more contrast.
+# A CAD viewport's key light: a +z face reads 0.89, +x 0.67, +y 0.54, so the
+# three visible sides of a box are clearly apart, and any face turned away
+# sits on the ambient floor.  raster.py adds the occlusion and the shadow.
+# Raise GAIN for more contrast.
 
-LIGHT = vnorm((0.45, 0.25, 1.00))
-AMBIENT = 0.62
-GAIN = 0.45
+LIGHT = vnorm((0.50, 0.20, 1.00))
+AMBIENT = 0.45
+GAIN = 0.50
 
 
 def shade_factor(normal):
