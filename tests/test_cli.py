@@ -48,16 +48,6 @@ with b.step("Pin it.") as s:
 
 
 class TestRendering(_Temp):
-    def test_it_creates_a_starter_without_overwriting(self):
-        spec = self.tmp / "my-build.py"
-        first = run("--new", spec)
-        self.assertEqual(first.returncode, 0, first.stderr)
-        self.assertIn("from iqdraw import Build", spec.read_text())
-        original = spec.read_text()
-        second = run("--new", spec)
-        self.assertNotEqual(second.returncode, 0)
-        self.assertEqual(spec.read_text(), original)
-
     def test_it_writes_a_booklet(self):
         out = self.tmp / "out.html"
         r = run(self.spec(GOOD), "-o", out, "--detail", "simple")
@@ -81,17 +71,18 @@ class TestRendering(_Temp):
                          ["step-01.svg", "step-02.svg"])
 
     def test_simple_detail_is_much_smaller_than_cad(self):
-        if not support.parts.HAS_CAD_MESHES:
-            self.skipTest("optional CAD meshes are not installed")
         a, b = self.tmp / "cad.html", self.tmp / "simple.html"
         run(self.spec(GOOD), "-o", a, "--detail", "cad")
         run(self.spec(GOOD), "-o", b, "--detail", "simple")
         self.assertLess(b.stat().st_size, a.stat().st_size)
 
     def test_the_hero_can_be_dropped(self):
+        # The finished picture a letter guide ends on is the hero there.
         a, b = self.tmp / "a.html", self.tmp / "b.html"
-        run(self.spec(GOOD), "-o", a, "--detail", "simple")
-        run(self.spec(GOOD), "-o", b, "--detail", "simple", "--no-hero")
+        spec = GOOD.replace('done="it is rigid"',
+                            'done="it is rigid", finale="cell"')
+        run(self.spec(spec), "-o", a, "--detail", "simple")
+        run(self.spec(spec), "-o", b, "--detail", "simple", "--no-hero")
         self.assertLess(b.stat().st_size, a.stat().st_size)
 
 

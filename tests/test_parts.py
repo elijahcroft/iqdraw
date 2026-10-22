@@ -34,11 +34,19 @@ class TestLookup(unittest.TestCase):
     def test_every_known_family_builds(self):
         samples = {
             "beam": "beam_1x4", "plate": "plate_2x4", "corner": "corner_2x2",
-            "pin": "pin_1x1", "shaft": "shaft_3", "standoff": "standoff_2",
+            "pin": "pin_1x1", "shaft": "shaft_3", "capped": "capped_shaft_2",
+            "standoff": "standoff_2",
             "gear": "gear_36", "wheel": "wheel_200", "collar": "collar",
             "spacer": "spacer", "washer": "washer", "motor": "motor",
             "brain": "brain", "bumper": "bumper", "distance": "distance",
-            "battery": "battery", "band": "band_4",
+            "battery": "battery", "band": "band_4", "lbeam": "lbeam_2x3",
+            "connector": "connector_2w_1x2", "plastic": "plastic_shaft_2",
+            "cable": "cable_200", "lockbeam": "lockbeam_1x3",
+            "standoffconn": "standoffconn_mini", "motorshaft": "motorshaft_3",
+            "omni": "omni_200", "anglebeam": "anglebeam_3x3_60",
+            "pulley": "pulley_20", "string": "string_6x3.5",
+            "touchled": "touchled", "tyre": "tyre_200", "hub": "hub_200",
+            "crankarm": "crankarm_1x4", "tractionlink": "tractionlink",
         }
         self.assertEqual(sorted(samples), known_families())
         for family, name in samples.items():
@@ -50,6 +58,13 @@ class TestLookup(unittest.TestCase):
     def test_every_primitive_is_a_known_kind(self):
         for prim in get("gear_36").prims:
             self.assertIsInstance(prim, (Facet, Edge, Disc))
+
+
+class TestStandIns(unittest.TestCase):
+    def test_a_stand_in_draws_its_base_and_takes_the_new_name(self):
+        part = get("beam_1x4@1x4 Crank Arm")
+        self.assertEqual(part.label, "1x4 Crank Arm")
+        self.assertEqual(len(part.holes), len(get("beam_1x4").holes))
 
 
 class TestErrors(unittest.TestCase):
@@ -96,8 +111,6 @@ class TestDetail(unittest.TestCase):
         parts.set_detail("cad")
 
     def test_simple_is_lighter_than_cad(self):
-        if not parts.HAS_CAD_MESHES:
-            self.skipTest("optional CAD meshes are not installed")
         parts.set_detail("cad")
         heavy = len(get("gear_36").prims)
         parts.set_detail("simple")
