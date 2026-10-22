@@ -188,12 +188,14 @@ def depth(p):
 VIEW = vnorm((1.0, 1.0, 1.0))
 
 # -------------------------------------------------------------------- shading
-# Calibrated so a +z face reads 1.00, +x reads 0.82, +y reads 0.68, and any
-# face turned away sits on the ambient floor.  Raise GAIN for more contrast.
+# A CAD viewport's key light: a +z face reads 0.89, +x 0.67, +y 0.54, so the
+# three visible sides of a box are clearly apart, and any face turned away
+# sits on the ambient floor.  raster.py adds the occlusion and the shadow.
+# Raise GAIN for more contrast.
 
-LIGHT = vnorm((0.67, 0.42, 1.00))
+LIGHT = vnorm((0.50, 0.20, 1.00))
 AMBIENT = 0.45
-GAIN = 0.70
+GAIN = 0.50
 
 
 def shade_factor(normal):
@@ -231,8 +233,8 @@ def mix_color(h, other, t):
 
 
 def fade(h, amount):
-    """Wash a colour out toward pale grey - used for already-built steps."""
-    return mix_color(h, "#c9ccd2", amount)
+    """Wash a colour out toward near-white - used for already-built steps."""
+    return mix_color(h, "#eceef1", amount)
 
 
 def outline_color(base):
@@ -348,7 +350,15 @@ class Edge:
 
     @property
     def key(self):
-        return depth(centroid((self.a, self.b)))
+        # An edge lies exactly on the faces it outlines, so at its true depth
+        # those faces sort after it about half the time and their seam strokes
+        # paint it out.  Nudged a hair toward the camera, it draws just after
+        # its own faces and still behind anything genuinely in front of it.
+        return depth(centroid((self.a, self.b))) + EDGE_BIAS
+
+
+# About a millimetre along the view direction (depth is x+y+z, in pitch).
+EDGE_BIAS = 0.15
 
 
 # ---------------------------------------------------- 2D profile constructors
@@ -518,12 +528,17 @@ def _split_span(a, b, cell):
     return [a + (b - a) * i / n for i in range(n + 1)]
 
 
-def box(x0, y0, z0, x1, y1, z1, color, cell=1.0, edges=True, edge_width=1.0):
+def box(x0, y0, z0, x1, y1, z1, color, cell=1.0, edges=True, edge_width=1.0,
+        top=True):
     """
     Axis-aligned box, subdivided into cells no larger than `cell` so the
     painter's-algorithm depth sort stays accurate.  Without this a single wide
     facet - a brain lid, a motor body - can sort ahead of a small part sitting
     on its far end and paint straight over it.
+
+    `top=False` leaves off the +z cap, for a box with another solid sitting
+    on it.  A cap hidden under a slab is still drawn, and the depth sort lets
+    its cells out through the slab in stripes.
     """
     xs = _split_span(x0, x1, cell)
     ys = _split_span(y0, y1, cell)
@@ -539,8 +554,9 @@ def box(x0, y0, z0, x1, y1, z1, color, cell=1.0, edges=True, edge_width=1.0):
     for i in range(len(xs) - 1):
         for j in range(len(ys) - 1):
             a, b, c, d = xs[i], xs[i + 1], ys[j], ys[j + 1]
-            out.append(Facet([(a, c, z1), (b, c, z1), (b, d, z1), (a, d, z1)],
-                             color, (0.0, 0.0, 1.0)))
+            if top:
+                out.append(Facet([(a, c, z1), (b, c, z1), (b, d, z1),
+                                  (a, d, z1)], color, (0.0, 0.0, 1.0)))
             out.append(Facet([(a, d, z0), (b, d, z0), (b, c, z0), (a, c, z0)],
                              color, (0.0, 0.0, -1.0)))
     return out

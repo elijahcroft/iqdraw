@@ -1,4 +1,4 @@
-# IQDraw
+# iqdraw
 
 [![Tests](https://github.com/elijahcroft/iqdraw/actions/workflows/tests.yml/badge.svg)](https://github.com/elijahcroft/iqdraw/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -18,8 +18,8 @@ frame — written once, placed twice, mirrored for the far side — and its
 booklet is divided into named **sections**. See
 [Building something bigger](#building-something-bigger).
 
-IQDraw works offline with Python 3.9 or newer. Its renderer is
-standard-library-only; the desktop installation includes CustomTkinter.
+IQDraw works offline with Python 3.9 or newer. Its renderer needs numpy; the
+desktop installation includes CustomTkinter.
 
 ## Desktop app
 
@@ -77,8 +77,7 @@ The complete [pinned frame](examples/pinned-frame.py),
 | `--png` | also rasterise each step (needs `rsvg-convert`) |
 | `--no-hero` | drop the finished-model image from the cover |
 | `--new FILE` | create a starter build without overwriting an existing file |
-| `--detail simple` | use the included, independently drawn procedural geometry (default) |
-| `--detail cad` | use optional local high-detail meshes when legally available |
+| `--detail simple` | plainer geometry, about a quarter the file size |
 | `--context-detail simple` | plainer geometry for the parts *already built*; the step's own parts keep full detail |
 | `--check-only` | run the checks and report, drawing nothing |
 | `--strict` | treat anything the checks find as an error |
@@ -86,7 +85,7 @@ The complete [pinned frame](examples/pinned-frame.py),
 
 You can also run `python3 -m iqdraw` anywhere you would use the `iqdraw`
 command. Contributors should start with [CONTRIBUTING.md](CONTRIBUTING.md);
-`./run-tests.sh` runs the dependency-free test suite.
+`./run-tests.sh` runs the test suite.
 
 ---
 
@@ -158,7 +157,9 @@ The CLI renders the first `Build` it finds at module level.
 - everything built so far, **washed out**, with this step's parts at **full
   colour** — so the new work is unmistakable
 - a **parts callout** listing only what this step needs, with counts
-- **insertion arrows**, where you ask for them (see `arrow` below)
+- the parts going in **pulled back** along their `arrow`, with a thin green
+  line to where each one lands, and a small inset of the step finished (see
+  `arrow` below)
 - a **"turn the model 90° to the left"** banner whenever the camera angle
   changes, so a reader never mistakes a new viewpoint for a changed build
 - one frame shared by every step, sized to the finished model, so the build
@@ -192,17 +193,31 @@ full colour with no parts callout.
 - `color` — a `PALETTE` name or any hex string, overriding the part default.
 - `qty` — affects the parts callout only, for when one drawn part stands in
   for several.
-- `arrow` — draw an insertion arrow pointing the way the part goes in. `True`
-  means straight down; otherwise `'+x'`, `'-x'`, `'+y'`, `'-y'`, `'+z'`,
-  `'-z'`, `'up'`, `'down'`.
+- `arrow` — the way the part goes in. `True` means straight down; otherwise
+  `'+x'`, `'-x'`, `'+y'`, `'-y'`, `'+z'`, `'-z'`, `'up'`, `'down'`.
 
 `s.many(part, positions, **kw)` places the same part at several coordinates.
 
-**Use `arrow` whenever the step is "which hole?" rather than "which part?"**
-"A shaft through holes 0, 2 and 6" asks a student to count along twenty
-identical holes; three arrows answer it at a glance. Arrows are flat
-annotations drawn over the top of the model — they are never occluded by it,
-and they never appear on the cover image.
+**Give an `arrow` to every part that pushes in or slides on.** The booklet is
+drawn the way a printed VEX build guide is: each such part is pulled back
+along its arrow, a green guide line runs from it to the hole it goes in, and
+a small inset in the corner shows the step finished. "A shaft through holes
+0, 2 and 6" asks a student to count along twenty identical holes; the pulled
+back shaft and its line answer it at a glance. A part with no arrow is drawn
+where it ends up.
+
+Parts going the same way are pulled back together, and the ones sitting
+further out are pulled further, so a collar that goes on after a wheel is
+drawn in front of it. A new part with no arrow that sits outside the parts
+going in, like the beam that pins are pushed through, is pulled back further
+still so it does not hide them.
+
+Parts put together off the model and pushed on as one piece, like a wheel
+already pinned to its lock beam, take the same `arrow` and a shared
+`group="..."` label, and are pulled back together without coming apart.
+
+`Build(..., explode=False)` turns this off and draws flat red insertion
+arrows instead, with every part in place.
 
 ---
 
@@ -305,9 +320,12 @@ student is looking at.
 
 **Use `note` the second time you place a module.** It is what a real build
 guide does — "build a second one, mirrored" beats eight steps the reader has
-already followed once. A collapsed step drops its insertion arrows, because
-arrows answer *which way does this part go in*, and a step placing a finished
-module is not asking that.
+already followed once. A collapsed step drops its parts' own arrows, because
+those answer *which way does this part go in*, and a step placing a finished
+module is not asking that. Give the `place` call its own `arrow=` instead,
+the way the finished module goes on, and the module is drawn pulled back
+in one piece. Its callout shows the parts, an arrow, and the module they
+make.
 
 ### Sections
 
@@ -323,16 +341,12 @@ with b.step("Lay a 1x8 beam across both rails.") as s:
 A section is a named run of steps. In the booklet each one gets a heading, the
 count of steps in it, and its optional note — so the end of a chunk is visible
 from the start of it, the same job the cover's step count does for the build
-as a whole. Printed, a section starts a new page.
+as a whole. The heading sits above the section's first step, and the pages
+run on without a break, the way a printed build guide runs its chapters.
 
-Declaring sections also turns on two things on the page:
-
-- **a contents list on the cover**, naming every section and the steps it
-  covers. A job of unknown shape becomes a job with eight things in it that
-  finish.
-- **a "fetch these before you start" row** under each section heading, listing
-  everything that section needs. Following a build should not be interrupted
-  by a trip to the tray on every step.
+Declaring sections also puts **a contents list on the cover**, naming every
+section and the steps it covers. A job of unknown shape becomes a job with
+eight things in it that finish.
 
 Sections also change how the drawings are framed. **The frame is recomputed at
 each section, over everything built up to the end of it**, instead of being
@@ -376,16 +390,16 @@ wash it, 0–1), and `context_detail`.
 Every step redraws the whole model, so on a robot-sized build most of every
 drawing is parts that are washed out on purpose. `context_detail="simple"`
 draws those from the cheaper procedural shapes while the step's **own** parts
-keep optional local high-detail meshes:
+keep the official CAD meshes:
 
 ```python
 b = Build("Drive Base", context_detail="simple")
 ```
 
-When optional high-detail meshes are installed, this can substantially reduce
-the later step drawings. `--context-detail simple` does the same from the
-command line without editing the spec. It has no effect in the standard
-procedural-only installation because those parts are already simple.
+It takes the ten-step `drive-base` booklet from 8.6 MB to 5.5 MB — 1.9× on the
+step drawings themselves, with the rest being the cover image and the last
+step. `--context-detail simple` does the same from the command line without
+editing the spec.
 
 It is **off by default**, because it changes what a reader sees: an
 already-built beam is drawn as a plain beam with round holes rather than a
@@ -411,14 +425,18 @@ opens on a school laptop with no internet and prints straight from the browser.
 - **"Step 3 of 6" on every step**, in words rather than only as a badge, so
   progress never has to be held in your head.
 - **A box to tick** per step, which works on screen and survives printing.
-- **Everything a section needs, listed where the section starts**, so the
-  parts can be fetched once rather than one at a time.
+- **The layout of a printed build guide**: letter pages of four steps,
+  each with a blue step badge, a rounded parts callout above the drawing
+  ("1x" over each part, its name under it), and a small inset of the step
+  finished. A step with more to say than a quarter page holds takes the whole
+  row, and so does the last one.
 - **A described drawing.** Every diagram carries an `aria-label` naming what
   the step added, because the picture holds the half of the instruction the
   words leave out — which hole, which way round. Part icons sit beside their
   own names and are marked decorative, so nothing gets read out twice.
-- **Dark theme on screen, light theme on paper.** Drawings keep a pale plate
-  under them in dark mode; a black beam on a black page is not a drawing.
+- **White pages in every theme.** In dark mode only the desk around the
+  pages goes dark; the drawings assume a pale background, and a black beam on
+  a black page is not a drawing.
 - **Text contrast at WCAG AA or better** in both themes.
 
 Distinctions never rest on hue alone — already-built parts are separated from
@@ -438,6 +456,7 @@ catalogue.
 | `corner_AxB` | L bracket, A holes along +x and B up +z |
 | `pin_1x1` `pin_1x2` `pin_2x2` | connector pins, centred on their `at` |
 | `shaft_N` | N pitch long, square 3.18 mm section |
+| `capped_shaft_N` | plastic shaft with a round cap on its `-z` end, so it cannot pull through |
 | `standoff_N` | N pitch long, runs `0`…`N` from `at` — sits **on** a face |
 | `gear_N` | `gear_12` `gear_36` `gear_60`; official round lightening-hole patterns and raised hubs |
 | `wheel_N` | N = travel per revolution in mm: `wheel_100`, `wheel_160`, `wheel_200`, `wheel_250`. Uses the matching 20 mm pulley, 44 mm hub, or 64 mm hub; diameter is `N/pi` |
@@ -470,39 +489,61 @@ works on it.
 
 At the top of `parts.py`, in one block:
 
-**Procedural geometry** — every included part is drawn from original code using
-simple solids and profiles. This keeps the repository redistributable and the
-booklets compact. The drawings are instructional diagrams, not manufacturing
-models.
+**Official CAD geometry** — the bundled meshes for `beam_1x4`, `beam_1x7`,
+`beam_1x8`, `beam_2x8`, `beam_2x12`, `gear_12`, `gear_36`, `gear_60`,
+`pin_1x1`, `shaft_6`, `capped_shaft_2`, `standoff_4`, `collar` (the rubber
+shaft collar) and `wheel_200` (tyre and hub) are generated from VEX
+Robotics' published STEP models. Their molded ribs, recessed faces, bosses,
+lightening slots, tooth profiles, and real through-holes are therefore not
+artist's approximations. The meshes are compressed into `cadmesh.py`; using
+IQ Draw does not require a CAD package.
 
-**Measured**, from VEX's published documentation — 12.7 mm hole pitch, the
-3.18 mm square drive shaft (exactly ¼ pitch), and wheel sizes published as
-travel per revolution.
+Adding one does. `tools/iqdraw-cadmesh.py` reads a STEP file from VEX's
+"VEX IQ All Parts" pack, moves it into iqdraw's frame, decimates it to a
+triangle budget and prints the `_DATA` entry for `cadmesh.py`. Its docstring
+has the command. It needs OpenCascade, which `uv run --with cadquery-ocp`
+fetches into a throwaway environment, so nothing is installed. A part with a
+mesh still needs its procedural form in `parts.py`, because `--detail simple`
+uses it.
+
+**Measured**, from VEX's own documentation and STEP files — 12.7 mm hole
+pitch, the 3.18 mm square drive shaft (exactly ¼ pitch), and the wheel sizes,
+which VEX gives as travel per revolution.
 
 **Estimated** — beam and plate thickness, molded edge and hole chamfers, hole
 and pin radius, and standoff width. These were chosen to look right on the
 page, not measured with a caliper. They are safe to change; nothing else
 depends on their values.
 
-**Colours follow the VEX IQ (2nd gen) base-kit plastic** — the colour a part
-actually is when a student pulls it out of the tray:
+**Structural plastic is drawn the grey VEX's own build guides use.** The
+base-kit beams are black, but molded ribs, recesses and holes vanish on black,
+and the manuals students already follow draw them grey. The grey was sampled
+from those manuals: a lit face lands on their `#959498`. Everything else
+follows the VEX IQ (2nd gen) base-kit plastic, the colour a part actually is
+when a student pulls it out of the tray:
 
 | part | colour |
 |---|---|
-| beams, plates | black |
-| corner connectors, standoffs | black |
+| beams, plates, corner connectors | build-guide grey (the kit's are black) |
+| standoffs | black |
 | connector pins | blue |
 | gears | blue |
 | shafts | zinc-plated steel |
 | plastic shafts | black |
-| tyres | black, on a light grey hub |
+| tyres | black, drawn a shade lighter so the tread reads, on a light grey hub |
 | shaft collars | black rubber |
 | brain, motors, sensors | dark charcoal |
 
 Every plastic family is also sold in other colours, so **check the table
 against your own kit** — VEX has changed plastic colours between production
 runs, and a wrong colour actively misleads a student. It is one table at the
-top of `parts.py`, and any placement can override with `color:`.
+top of `parts.py`, and any placement can override with `color:`. `color="black"`
+on a beam gives the base-pack colour back.
+
+**Every molded edge is outlined**, the way the build guides draw them. Outline
+segments are sorted a millimetre toward the camera (`EDGE_BIAS` in `geom.py`).
+At their true depth they lie exactly on the faces they outline, and those
+faces' seam strokes painted them out, so the CAD detail read only as shading.
 
 The electronics — brain, motor, sensors — are proportioned to be recognisable
 at a glance, not dimensionally accurate. Replace those functions if you need
@@ -567,29 +608,41 @@ than dark circles painted on a solid face, extrusion walls are banded
 vertically, and long outlines are chopped before sorting. A small artefact can
 still appear where a pin meets the rounded end of a beam.
 
-**Output size grows with the build** because every step redraws the model so
-far. The included procedural geometry is optimized for sharing and printing,
-but a long robot build can still produce a multi-megabyte standalone file.
+**Output is large** — the six-step gear-train booklet is about 5 MB at the
+default detail level, most of it true gear teeth and molded beam geometry. It
+opens and prints normally.
 
 Colours are interned as CSS classes and adjacent same-styled geometry is merged
-into single paths, which roughly halves the file without changing a pixel.
-`--no-hero` removes the finished-model cover drawing when attachment size is
-more important than the visual overview.
+into single paths, which roughly halves the file without changing a pixel. If
+that is still too big — a slow connection, an email attachment — `--detail
+simple` swaps the bundled CAD meshes for the procedural shapes underneath and
+brings the same booklet to about 1.3 MB, noticeably plainer but perfectly
+usable.
 
-When optional local high-detail meshes are installed, `--context-detail simple`
-keeps previously built parts procedural while preserving detail on each step's
-new parts. This can substantially reduce a long booklet without changing its
-instructions.
+**Every official mesh adds to it.** Giving the pins, collars, wheels and
+1x8/2x8 beams their CAD meshes roughly doubled the booklets that use them:
+`rubber-band-car` went from 11 MB to 23 MB, and `pendulum` from 5 MB to 14 MB.
+`--context-detail simple` takes them back to 12 MB and 9 MB, with each step's
+own parts still in full CAD. Halving the triangle budgets was tried and
+rejected: the tyre loses its tread, the hub breaks into shards and the beam
+ends go ragged.
+
+**And it grows with the build**, because every step redraws the whole model:
+the nineteen-step `grabber-arm` booklet is 11 MB and the ten-step `drive-base`
+one is 8.2 MB, or 5.2 MB with `--context-detail simple`, or 3.2 MB with
+`--detail simple`. Roughly, reckon on half a megabyte per step once a build is
+robot-sized. Those files open and print, but a forty-step build is the point
+where one of those flags stops being optional.
 
 **Opening one is as much layout as it is bytes.** A robot-sized booklet is a
 few hundred thousand SVG elements, and laying out every one of them before
 showing anything is most of what makes a big one slow. Two things address it,
 and neither changes a pixel:
 
-- **the steps are `content-visibility: auto`**, so the browser skips laying
+- **the pages are `content-visibility: auto`**, so the browser skips laying
   out the ones off screen until they are scrolled to, with a stand-in height
   meanwhile so the scrollbar behaves. Printing turns it back off, because
-  every step has to be laid out to reach paper.
+  every page has to be laid out to reach paper.
 - **coordinates are relative and tersely separated** (see below).
 
 Together those took `grabber-arm` from 13 MB and 1.9 s to open, to 11 MB and
@@ -659,16 +712,96 @@ invisible in the spec.
 
 ---
 
-## Licensing, trademarks, and geometry
+## Converting a printed build manual
+
+Printed Magikid and VEX manuals are pictures. The only text in
+them is step numbers, part numbers and boilerplate, so nothing can be
+extracted automatically. A conversion means reading the drawings and writing
+the spec by hand.
+
+1. **Render the manual large enough to count holes.** At 110 dpi the steps
+   are readable, but counting holes on a beam takes a crop at 300 dpi:
+
+   ```bash
+   pdftoppm -r 300 -f 2 -l 2 -png "manual.pdf" /tmp/m
+   magick /tmp/m-2.png -crop 1300x600+300+300 /tmp/callout.png
+   ```
+
+2. **Take part sizes from the callout icons, not the step drawings.** The
+   icons are drawn flat, so the holes can be counted directly. The step
+   drawings are foreshortened, so lengths read off them come out wrong.
+3. **Fix the axes before writing any step.** Choose them so the finished
+   model faces the camera on the `(+1,+1,+1)` diagonal. Anything that stands
+   up is drawn standing up, even if students build it flat on the table.
+   iqdraw cannot turn the model over halfway through a build.
+4. **Map each manual section to `section()`, and a part built twice to
+   an `Assembly`.** Place it the second time with `note=`. If the second copy
+   differs (here the first stand gets standoffs and the second doesn't), the
+   extra parts go in a build-level step, not in the assembly.
+5. **Render, then compare every step's PNG with the matching page of the
+   original.** Also compare the parts totals with the original's callouts.
+   Fix things and re-render until both match.
+
+Rotations that come up for upright parts, all checked in the pendulum:
+
+| want | `rot=` |
+|---|---|
+| beam standing up, length along +z, width along +y | `(0, -90, 0)` |
+| beam hanging down, length along -z | `(0, 90, 0)` |
+| beam on its edge, length along +y, width along +z | `(90, 0, 90)` |
+
+### VEX part numbers seen so far
+
+The callouts print a part number and a count, but no name. The STEP pack
+does name them (`2x8 Beam (228-2500-023).step`), so look a number up there
+before guessing from the drawing.
+
+| part number | iqdraw | |
+|---|---|---|
+| 228-2500-007 | `beam_1x8` | |
+| 228-2500-023 | `beam_2x8` | |
+| 228-2500-026 | `beam_2x12` | |
+| 228-2500-060 | `pin_1x1` | |
+| 228-2500-070 | `standoff_4` | |
+| 228-2500-080 | `capped_shaft_2` | |
+| 228-2500-122 | `shaft_6` | metal |
+| 228-2500-143 | `collar` | rubber shaft collar, half a pitch thick |
+| 228-2500-208 + 209 | `wheel_200` | 44 mm hub + 200 mm travel tyre, one part |
+
+Every part in this table has an official mesh.
+
+### Gaps found so far
+
+- **Centre holes.** A 2-wide VEX IQ beam has a hole in the middle of each
+  square of four, and the manuals use them. iqdraw only draws the regular
+  grid. A part in a centre hole goes at a half-hole coordinate such as
+  `y = 0.5`, and in the drawing it sits on plain plastic.
+- **Real sizes move things.** With official meshes, parts are their true
+  thickness: a rubber collar is 0.5 pitch, not the 0.36 the procedural one
+  draws. Lay stacks out from those sizes, or parts that look fine plain
+  will overlap once they are drawn in CAD.
+- **No pulley, string, omni wheel, chain or track.** Draw the
+  nearest part and say so in the step caption. Bigger builds will need these
+  added to `parts.py` first.
+
+---
+
+## Licensing and the bundled CAD data
 
 The source is MIT — see [LICENSE](LICENSE).
 
-The included geometry is independently drawn, procedural, and covered by this
-repository's MIT license. IQDraw deliberately does **not** distribute VEX CAD
-files or geometry derived from them. `--detail cad` is an extension point for a
-local `iqdraw/cadmesh.py`; it falls back to the included geometry when no such
-module is present. Do not publish third-party mesh data unless you have clear
-permission to redistribute it.
+**The geometry in `cadmesh.py` is not.** Those meshes are derived from CAD
+models published by VEX Robotics, and this project makes no claim over them.
+Before publishing iqdraw anywhere with that file included, check what VEX's
+terms actually permit — a permissive licence on the code does not extend to
+data generated from someone else's models.
+
+Two things make that a solvable problem rather than a blocker:
+
+- every part has a procedural form, and `--detail simple` never touches the
+  bundled meshes, so the tool is fully functional without them
+- `cadmesh.py` is self-contained, so it can be dropped, replaced, or moved
+  behind a separate download without touching anything else
 
 "VEX" and "VEX IQ" are trademarks of Innovation First, Inc. This project is not
 affiliated with, endorsed by, or sponsored by VEX Robotics or Innovation First.

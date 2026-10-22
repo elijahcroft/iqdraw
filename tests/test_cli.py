@@ -79,17 +79,18 @@ class TestRendering(_Temp):
                          ["step-01.svg", "step-02.svg"])
 
     def test_simple_detail_is_much_smaller_than_cad(self):
-        if not support.parts.HAS_CAD_MESHES:
-            self.skipTest("optional CAD meshes are not installed")
         a, b = self.tmp / "cad.html", self.tmp / "simple.html"
         run(self.spec(GOOD), "-o", a, "--detail", "cad")
         run(self.spec(GOOD), "-o", b, "--detail", "simple")
         self.assertLess(b.stat().st_size, a.stat().st_size)
 
     def test_the_hero_can_be_dropped(self):
+        # The finished picture a letter guide ends on is the hero there.
         a, b = self.tmp / "a.html", self.tmp / "b.html"
-        run(self.spec(GOOD), "-o", a, "--detail", "simple")
-        run(self.spec(GOOD), "-o", b, "--detail", "simple", "--no-hero")
+        spec = GOOD.replace('done="it is rigid"',
+                            'done="it is rigid", finale="cell"')
+        run(self.spec(spec), "-o", a, "--detail", "simple")
+        run(self.spec(spec), "-o", b, "--detail", "simple", "--no-hero")
         self.assertLess(b.stat().st_size, a.stat().st_size)
 
 

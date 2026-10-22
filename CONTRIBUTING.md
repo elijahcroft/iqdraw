@@ -1,8 +1,7 @@
 # Contributing to iqdraw
 
-The renderer and tests have no dependencies, so contributors can run the suite
-without an install or virtualenv. The desktop entry point uses CustomTkinter;
-`python3 -m pip install -e .` installs it for GUI work.
+The renderer needs numpy and the desktop entry point uses CustomTkinter;
+`python3 -m pip install -e .` installs both. The tests use nothing else.
 
 ```bash
 ./run-tests.sh            # all of it, about 30 seconds
@@ -20,7 +19,7 @@ used by `--png`.
 |---|---|
 | `geom.py` | vectors, transforms, the isometric projection, shading, and the solid constructors (`box`, `cylinder`, `extrude`) |
 | `parts.py` | the part catalogue — one builder per family, plus the colour table and the measured-vs-estimated constants |
-| `cadmesh.py` | optional, untracked local high-detail mesh provider |
+| `cadmesh.py` | compressed official VEX meshes, decoded on demand. Generated from VEX's STEP pack, not hand-edited |
 | `spec.py` | the `Build` / `Assembly` / `Step` API a build file writes against, and how modules and sections compose |
 | `render.py` | culling, depth sorting, and SVG emission |
 | `check.py` | the sanity checks that run before every draw |
@@ -131,8 +130,7 @@ Line length is 79. There is no formatter or linter configured, on purpose.
 
 ## Geometry and licensing
 
-All committed part geometry must be original and MIT-licensable. Do not commit
-VEX CAD files or meshes derived from them without explicit redistribution
-permission. A local, ignored `cadmesh.py` may provide `cad_mesh` and
-`gear_mesh` for private use; the public package must remain fully functional
-without it.
+Procedural part geometry must be original and MIT-licensable. The meshes in
+`cadmesh.py` are derived from VEX's CAD models and are not covered by the MIT
+licence; see "Licensing and the bundled CAD data" in `README.md`. Every part
+must still draw procedurally, so `--detail simple` keeps working without them.

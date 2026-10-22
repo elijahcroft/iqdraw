@@ -31,11 +31,26 @@ class TestQuietOnValidBuilds(unittest.TestCase):
         b.step("s").add("beam_2x12", (0, 0, 0))
         self.assertEqual(check(b), [])
 
+    def test_parallel_diagonal_beams_apart_are_fine(self):
+        # their bounding boxes overlap, but the beams are 5 holes apart
+        b = Build("linkage")
+        with b.step("s") as s:
+            s.many("beam_1x10", [(0, y, 0) for y in (0, 5)], rot=(0, 0, 45))
+        self.assertNotIn("overlap", _kinds(b))
+
     def test_stacked_beams_touching_face_to_face_are_fine(self):
         b = Build("stack")
         with b.step("s") as s:
             s.add("beam_2x12", (0, 0, 0))
             s.add("beam_1x7", (1, 0, 0.5), rot=(0, 0, 90))
+        self.assertEqual(check(b), [])
+
+    def test_turned_beams_touching_end_to_end_are_fine(self):
+        # Their bounding boxes overlap; the beams do not.
+        b = Build("finger")
+        with b.step("s") as s:
+            s.add("beam_1x4", (0, 0, 0), rot=(0, 0, 35))
+            s.add("beam_1x4", (2.37, 2.72, 0), rot=(0, 0, 95))
         self.assertEqual(check(b), [])
 
     def test_a_compound_gear_pair_on_one_shaft_is_fine(self):

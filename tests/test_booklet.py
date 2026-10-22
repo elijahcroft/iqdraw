@@ -93,9 +93,9 @@ class TestStructure(unittest.TestCase):
                 if key in attrs:
                     self.assertNotRegex(attrs[key], r"^(https?:)?//")
 
-    def test_steps_are_an_ordered_list(self):
-        self.assertIn('<ol class="steps">', self.html)
-        self.assertEqual(self.html.count('<li class="step"'), 3)
+    def test_steps_come_in_order(self):
+        at = [self.html.index(f'id="step-{n}"') for n in (1, 2, 3)]
+        self.assertEqual(at, sorted(at))
 
     def test_heading_levels_never_skip(self):
         levels = [int(t[1]) for t, _ in self.doc.headings]
@@ -112,22 +112,26 @@ class TestOrientation(unittest.TestCase):
     def setUp(self):
         self.html = booklet(_sample())
 
-    def test_the_cover_states_the_shape_of_the_job(self):
-        self.assertIn("3 steps", self.html)
-        self.assertIn("3 parts", self.html)
-
-    def test_the_done_condition_is_on_the_cover(self):
-        self.assertIn("both gears turn together", self.html)
-
-    def test_no_done_line_when_none_was_given(self):
-        self.assertNotIn("Finished when", booklet(_sample(done="")))
-
+    # The pages copy the originals, which print no words; each step's words
+    # are still there, read aloud.
     def test_every_step_says_where_it_is_in_the_run(self):
         for n in (1, 2, 3):
-            self.assertIn(f"Step {n} <span class=\"of\">of 3</span>", self.html)
+            self.assertIn(f'<p class="vh">Step {n} of 3.', self.html)
 
-    def test_every_step_has_something_to_tick(self):
-        self.assertEqual(self.html.count('type="checkbox"'), 3)
+    def test_each_step_note_and_caption_is_read_aloud(self):
+        self.assertIn("Step 2 of 3. Pin it. press until it clicks", self.html)
+
+    def test_no_step_words_are_printed_on_the_page(self):
+        for line in re.findall(r"<p(?: class=\"([^\"]*)\")?>", self.html):
+            self.assertEqual(line, "vh")
+
+    def test_every_style_lays_out(self):
+        for style in ("letter", "landscape", "slides", "magikid"):
+            b = Build("S", style=style)
+            with b.step("one") as s:
+                s.add("beam_1x4", (0, 0, 0), arrow=True)
+            with self.subTest(style=style):
+                self.assertEqual(_parse(booklet(b)).mismatched, [])
 
 
 class TestAccessibility(unittest.TestCase):
@@ -155,18 +159,18 @@ class TestAccessibility(unittest.TestCase):
         self.assertIn("nothing added", labels[0])
 
     def test_part_icons_are_decorative_beside_their_own_names(self):
-        # The row already says "2x Connector Pin"; an icon announced as an
-        # image would make a screen reader read every row twice.
-        icons = re.findall(r'<span class="icon">(<svg[^>]*)', self.html)
+        # The row already says "2x" and the part's number; an icon announced
+        # as an image would make a screen reader read every row twice.
+        icons = re.findall(r'<span class="ic">(<svg[^>]*)', self.html)
         self.assertTrue(icons)
         for icon in icons:
             self.assertIn('aria-hidden="true"', icon)
 
-    def test_quantities_are_readable_without_the_visual_column(self):
-        self.assertIn('<span class="vh">Quantity </span>', self.html)
+    def test_quantities_are_text(self):
+        self.assertIn('<span class="q">2x</span>', self.html)
 
-    def test_the_checkbox_has_a_label(self):
-        self.assertIn("Mark step 1 done", self.html)
+    def test_callouts_carry_part_numbers(self):
+        self.assertIn("228-2500-060", self.html)
 
     def test_it_offers_a_dark_theme_and_a_print_theme(self):
         self.assertIn("prefers-color-scheme:dark", self.html)
@@ -180,13 +184,15 @@ class TestSharedStylesheet(unittest.TestCase):
     def test_one_stylesheet_serves_the_whole_document(self):
         html = booklet(_sample())
         used = set(re.findall(r'class="([a-z]+)"', html))
-        defined = set(re.findall(r"\.([a-z]+)\{", html))
+        # Styled somewhere in the sheet, on its own or inside another rule.
+        defined = set(re.findall(r"\.([a-z]+)[{ .:,>]", html))
         self.assertTrue(used)
         self.assertLessEqual(used - {"steps", "step"}, defined | {"steps"})
 
     def test_sharing_beats_repeating(self):
-        # Each drawing carrying its own <style> is the thing this replaced.
-        self.assertEqual(booklet(_sample()).count("<style>"), 2)
+        # Each drawing carrying its own <style> is the thing this replaced;
+        # the raster drawings need none, so the page's is the only one.
+        self.assertEqual(booklet(_sample()).count("<style>"), 1)
 
 
 class TestExamples(unittest.TestCase):
@@ -215,7 +221,9 @@ class TestExamples(unittest.TestCase):
                 self.assertEqual(doc.stack, [])
 
     def test_hero_can_be_dropped(self):
+        # A letter guide only has a hero when it ends on a finished picture.
         build = support.load_example(support.example_names()[0])
+        build.finale = "cell"
         self.assertLess(len(booklet(build, hero=False)), len(booklet(build)))
 
 
