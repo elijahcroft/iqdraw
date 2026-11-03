@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 from .geom import Disc, Edge, Facet, mat_apply, vsub
 from . import joints as J
+from .drive import MESH_TOL, drive
 
 # A face-to-face joint is contact, not interference, and floating-point noise
 # puts it either side of zero.  Parts have to share more than this in all three
@@ -34,9 +35,6 @@ TOUCH = 0.12
 # nothing, so this only has to absorb rounding.
 REACH = 0.15
 
-# Gear centre distance is exact arithmetic - pitch radius is teeth/24 - so the
-# tolerance only has to cover a spec author writing 1.5 for 1.5.
-MESH_TOL = 0.06
 # Beyond this much of a gap, two gears are unrelated rather than badly spaced.
 # Being a whole hole out is the classic slip, so this has to reach past 1.0;
 # what keeps it precise is the "nothing in between" test, not this number.
@@ -466,12 +464,35 @@ def _check_collisions(model, _collided):
                               f"wrong place")
 
 
+def _check_jammed(model, collided):
+    """
+    Gears meshing in a loop that cannot turn.
+
+    Three gears all meshing with each other, or two shafts joined by two
+    gear pairs of different ratios: each mesh is fine alone, but together
+    they ask one shaft to turn at two speeds, so nothing turns.  It draws
+    perfectly and locks solid in the hand.
+    """
+    for train in drive(model)["trains"]:
+        if not train["jammed"]:
+            continue
+        a, b = (model.parts[i] for i in train["clash"])
+        gears = [model.parts[i] for body in train["bodies"]
+                 for i in body["parts"] if model.parts[i].family == "gear"]
+        yield Problem(max(p.step for p in gears), "jammed",
+                      f"{a.label} and {b.label} close a loop of meshing "
+                      f"gears that would have to turn two speeds at once, "
+                      f"so none of the {len(gears)} gears can turn - take "
+                      f"one out of the loop")
+
+
 CHECKS = (_check_duplicates, _check_structural_overlap,
           _check_gear_mesh, _check_stranded)
 
 # Rules over the joint model.  They share a set of rods already reported as
 # passing through solid, so one mistake is not also reported as a loose pin.
-JOINT_CHECKS = (_check_rods, _check_loose, _check_collisions)
+JOINT_CHECKS = (_check_rods, _check_loose, _check_collisions,
+                _check_jammed)
 
 
 def check(build, model=None):

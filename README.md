@@ -604,6 +604,7 @@ stderr. They do not stop the drawing — `--strict` makes them fatal,
 | `rod in solid` | a pin or shaft runs through a part's plastic instead of one of its holes — half a hole out, or sideways through the edge of a flat beam |
 | `loose` | a pin reaches into fewer than two parts, a shaft into none, or nothing pins or shafts a beam, plate, corner, standoff, gear, wheel, collar or spacer on |
 | `collision` | solid parts fill the same space: a gear overlapping its spacer, a wheel rubbing the rail, a beam through an upright |
+| `jammed` | meshing gears form a loop that cannot turn: three gears all meshing with each other, or two shafts joined by two gear pairs of different ratios |
 
 The last three read the joint model in `joints.py` — each part's holes, the
 centre line of each pin and shaft, and its nominal envelope — not the
@@ -654,7 +655,8 @@ $ iqdraw examples/gear-train.py --inspect | jq -c '.drive.trains[].bodies[].spee
 ```
 
 The knob turns the 60-tooth gear a fifth of a turn, the same way round. A ring
-of gears that would have to turn two speeds at once is reported `jammed`.
+of gears that would have to turn two speeds at once is reported `jammed`, with
+the `clash` pair that closes the loop, and fails the `jammed` check.
 
 Mistakes in the spec itself are reported against the line that caused them:
 

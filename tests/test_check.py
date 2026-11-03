@@ -130,6 +130,36 @@ class TestCatchesRealMistakes(unittest.TestCase):
 
 
 
+class TestJammed(unittest.TestCase):
+    def test_three_gears_meshing_in_a_ring_jam(self):
+        b = Build("x")
+        with b.step() as s:
+            for at in ((0, 0, 0), (1, 0, 0), (0.5, 0.8660254, 0)):
+                s.add("gear_12", at, axis="z")
+        found = [p for p in _problems(b) if p.kind == "jammed"]
+        self.assertEqual(len(found), 1)
+        self.assertIn("3 gears", found[0].message)
+
+    def test_two_shafts_joined_by_two_different_ratios_jam(self):
+        b = Build("x")
+        with b.step() as s:
+            beam = s.add("beam_1x4", (0, 0, 0))
+            for x, low, high in ((0, "gear_12", "gear_36"),
+                                 (2, "gear_36", "gear_12")):
+                s.add("shaft_4", beam.hole(x))
+                s.add(low, beam.hole(x) + (0, 0, 0.5))
+                s.add(high, beam.hole(x) + (0, 0, 1.0))
+        self.assertIn("jammed", _kinds(b))
+
+    def test_a_plain_train_and_an_idler_do_not_jam(self):
+        b = Build("x")
+        with b.step() as s:
+            g = s.add("gear_12", (0, 0, 0), axis="z")
+            idler = s.add("gear_36", g.meshing("gear_36", "+x"))
+            s.add("gear_12", idler.meshing("gear_12", "+x"))
+        self.assertNotIn("jammed", _kinds(b))
+
+
 class TestJoints(unittest.TestCase):
     """The joint rules, which read holes and rods rather than boxes."""
 

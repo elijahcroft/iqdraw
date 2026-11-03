@@ -109,6 +109,7 @@ part in a scratch build and print `ref.box` and `ref.hole(…).axis`, or run
 | `overlap` | two beams or plates overlap |
 | `gear mesh` | two gears are almost, but not exactly, at mesh distance |
 | `stranded` | a part touches nothing |
+| `jammed` | meshing gears form a loop that cannot turn, such as two shafts joined by two different gear ratios |
 | `duplicate` | the same part twice in one place |
 
 ## Known quirks
