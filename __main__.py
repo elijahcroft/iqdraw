@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import pathlib
 import shutil
 import subprocess
@@ -110,6 +111,13 @@ def main(argv=None):
                     help="treat any problem the checks find as an error")
     ap.add_argument("--check-only", action="store_true",
                     help="run the checks and report, without drawing anything")
+    ap.add_argument("--inspect", action="store_true",
+                    help="print the finished build as JSON - every part's "
+                         "position, box and holes, what is joined to what, "
+                         "and the problems - without drawing anything")
+    ap.add_argument("--at", metavar="X,Y,Z",
+                    help="with --inspect: also report the parts and holes "
+                         "at this point")
     ap.add_argument("--gui", action="store_true",
                     help="open the desktop interface")
     args = ap.parse_args(argv)
@@ -138,12 +146,27 @@ def main(argv=None):
         ap.error("--strict cannot be used with --no-check")
     if args.no_check and args.check_only:
         ap.error("--check-only cannot be used with --no-check")
+    at = None
+    if args.at is not None:
+        if not args.inspect:
+            ap.error("--at needs --inspect")
+        try:
+            at = tuple(float(v) for v in args.at.split(","))
+        except ValueError:
+            at = ()
+        if len(at) != 3:
+            ap.error(f"--at wants three numbers like 3,0,0.25, got {args.at!r}")
 
     parts.set_detail(args.detail)
     build = load_build(args.spec)
     if args.context_detail:
         build.context_detail = args.context_detail
 
+    if args.inspect:
+        from .report import report
+        json.dump(report(build, at), sys.stdout, indent=1)
+        print()
+        return
 
     if not args.no_check:
         problems = check(build)

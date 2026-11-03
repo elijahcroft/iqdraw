@@ -14,10 +14,10 @@ from .geom import PITCH_MM
 from .instructions import booklet
 from .parts import PALETTE, get, known_families, set_detail
 from .render import RenderOpts, render, render_part_icon
-from .spec import Assembly, Build, Section, Step
+from .spec import Assembly, Build, Point, Ref, Section, Step
 
 __all__ = [
-    "Assembly", "Build", "Section", "Step", "RenderOpts",
+    "Assembly", "Build", "Point", "Ref", "Section", "Step", "RenderOpts",
     "PALETTE", "PITCH_MM",
     "booklet", "get", "known_families", "render", "render_part_icon",
     "set_detail",

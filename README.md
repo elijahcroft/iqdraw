@@ -11,7 +11,7 @@ a small, readable Python specification.
 
 [![A finished six-wheel survey rover rendered by IQDraw, with a grey deck, yellow sensor mast, and red bumper](docs/assets/survey-rover.png)](https://elijahcroft.github.io/iqdraw/#examples)
 
-*The 55-part [survey rover](examples/survey-rover.py), rendered directly from
+*The 80-part [survey rover](examples/survey-rover.py), rendered directly from
 its build specification with IQDraw's redistributable procedural geometry.*
 
 You describe a build as a list of parts at hole coordinates. It renders
@@ -76,7 +76,7 @@ The complete [pinned frame](examples/pinned-frame.py),
 [gear train](examples/gear-train.py), [drive base](examples/drive-base.py), and
 [grabber arm](examples/grabber-arm.py) show progressively larger builds. The
 [six-wheel survey rover](examples/survey-rover.py) is the flagship example:
-20 steps, 55 parts, mirrored wheel modules, coloured structure, electronics,
+24 steps, 80 parts, mirrored wheel modules, coloured structure, electronics,
 and a deliberate final camera change across seven named sections.
 
 | option | what it does |
@@ -92,6 +92,7 @@ and a deliberate final camera change across seven named sections.
 | `--check-only` | run the checks and report, drawing nothing |
 | `--strict` | treat anything the checks find as an error |
 | `--no-check` | skip the checks |
+| `--inspect` | print the finished build as JSON — parts, holes, joints, problems — drawing nothing. `--at X,Y,Z` narrows it to one point |
 
 You can also run `python3 -m iqdraw` anywhere you would use the `iqdraw`
 command. Contributors should start with [CONTRIBUTING.md](CONTRIBUTING.md);
@@ -111,6 +112,13 @@ integer grid can describe real builds.
 has holes at `(0,0,0)` through `(7,0,0)`. A pin at `(3,0,0)` goes through that
 beam's fourth hole. The pin and the hole share an address — no offset
 arithmetic.
+
+**Holes only run through a part's face.** A beam lying flat has vertical
+holes, so a pin or shaft through it runs along `z`. An axle running sideways
+needs a beam turned up on edge (`rot=(90, 0, 0)` turns the holes to face `y`)
+— pushed through a flat beam it would be going through solid plastic, and the
+`rod in solid` check says so. `ref.hole(...).axis` tells you which way any
+hole runs.
 
 **Coordinates are 0-based.** Hole `2` in a spec is the third hole a student
 counts along the beam. Write step notes in whichever convention you teach, but
@@ -191,9 +199,11 @@ banner is generated from it automatically.
 A step that adds no parts is a "check your work" step: it redraws the model at
 full colour with no parts callout.
 
-### `s.add(part, at, rot=None, axis=None, color=None, qty=1, arrow=None, mirror=None)`
+### `s.add(part, at, rot=None, axis=None, color=None, qty=1, arrow=None, mirror=None, on=None, side="+z")`
 
-- `at` — hole coordinates of the part's first hole. Floats are fine.
+- `at` — hole coordinates of the part's first hole. Floats are fine. A point
+  from `ref.hole()` (below) also lines a pin, shaft, gear, wheel, collar or
+  spacer up with that hole, unless `axis` or `rot` says otherwise.
 - `axis` — `'x' | 'y' | 'z'`. Reorients parts built along +z: pins, shafts,
   standoffs, gears, wheels, collars, spacers.
 - `rot` — extra rotation `(rx, ry, rz)` in degrees, applied X then Y then Z,
@@ -207,6 +217,9 @@ full colour with no parts callout.
   means straight down; otherwise `'+x'`, `'-x'`, `'+y'`, `'-y'`, `'+z'`,
   `'-z'`, `'up'`, `'down'`.
 
+- `on`, `side` — rest the part against another instead of working out the
+  height: see [Placing parts against each other](#placing-parts-against-each-other).
+
 `s.many(part, positions, **kw)` places the same part at several coordinates.
 
 **Use `arrow` whenever the step is "which hole?" rather than "which part?"**
@@ -214,6 +227,42 @@ full colour with no parts callout.
 identical holes; three arrows answer it at a glance. Arrows are flat
 annotations drawn over the top of the model — they are never occluded by it,
 and they never appear on the cover image.
+
+### Placing parts against each other
+
+`s.add()` returns a `Ref` to the part it placed (`s.many()` a list of them),
+and a `Ref` knows where its holes and faces are. Place the next part against
+it and the stack arithmetic does itself:
+
+```python
+with b.step("Shafts, spacers, gears and collars") as s:
+    beam = s.add("beam_2x12", (0, 0, 0))
+    s.many("shaft_3", [beam.hole(x) for x in (0, 2, 6)])   # axis from the hole
+    sp = [s.add("spacer", beam.hole(x), on=beam) for x in (0, 2, 6)]
+    g12 = s.add("gear_12", beam.hole(0), on=sp[0])
+    g36 = s.add("gear_36", g12.meshing("gear_36", "+x"), on=sp[1])
+    s.add("collar", g12.pos, on=g12)
+```
+
+That is the gear train's whole stack — 0.375, 0.75, 1.18 — with no number
+typed in. `tests/test_refs.py` builds it both ways and checks they agree.
+
+| on a `Ref` | gives |
+|---|---|
+| `hole(x, y=0, z=0)` | the hole at `(x, y, z)` in the part's *own* hole coordinates, in world coordinates, carrying its axis. A gear's, wheel's or collar's bore is `hole(0)` |
+| `hole(..., side="up")` | the same hole's point on the face it opens onto — where a pin sits to join this part to the next one up |
+| `face(side)`, `top`, `bottom` | the coordinate of an outside face: `face("+y")`, `top == face("+z")` |
+| `holes`, `pos`, `axis`, `box` | every hole; where it was placed; where its own +z points; the space it fills |
+| `meshing(gear, toward)` | where `gear` sits to mesh with this one, `toward` across its face |
+
+`on=` takes a `Ref`, a list of them (the highest face wins) or a coordinate;
+`side` is which way it stacks — `"+z"` sits on top, `"+y"` presses against the
+`+y` face. Sizes are nominal: a beam is 0.5 thick, as two stacked beams
+measure, not the 0.48 its molded rim draws at. Points add as vectors, so
+`rail.hole(1) + (0, 2.2, 0)` is 2.2 holes along `+y` from that hole.
+
+A `Ref` is in the coordinates of the `Build` or `Assembly` it was added to,
+which is what you want while writing an assembly at its own origin.
 
 ---
 
@@ -235,7 +284,7 @@ two reasons that have nothing to do with each other:
 `Assembly` fixes the first. `section()` fixes the second.
 
 `examples/drive-base.py` is the worked example of both, and
-`examples/grabber-arm.py` — nineteen steps in eight sections, a shared
+`examples/grabber-arm.py` — twenty-two steps in eight sections, a shared
 chassis, and a claw made of two mirrored fingers — is the one that uses
 every part of this at once.
 
@@ -249,14 +298,14 @@ from iqdraw import Assembly, Build
 
 side = Assembly("Side Frame")
 
-with side.step("Lay a 2x12 beam down flat.") as s:
-    s.add("beam_2x12", (0, 0, 0))
+with side.step("Stand a 2x12 beam up on its long edge.") as s:
+    rail = s.add("beam_2x12", (0, 0, 0), rot=(90, 0, 0))   # holes face y
 
 with side.step("Push a shaft through hole 1 and hole 10.") as s:
-    s.many("shaft_4", [(x, 0, 0) for x in (1, 10)], axis="y", arrow="+y")
+    s.many("shaft_3", [rail.hole(x) for x in (1, 10)], arrow="+y")
 
 b = Build("Drive Base")
-b.place(side, at=(0, 5, 0))
+b.place(side, at=(0, 6, 0))
 b.place(side, at=(0, 0, 0), mirror="y")
 ```
 
@@ -370,7 +419,7 @@ cover, next to the step and part counts:
 b = Build(
     "Gear Ratio Demonstrator",
     subtitle="VEX IQ (2nd gen) - 12T / 36T / 60T train",
-    done="turning the crank turns all three gears, with no free play",
+    done="turning the knob turns all three gears, with no free play",
 )
 ```
 
@@ -533,6 +582,15 @@ stderr. They do not stop the drawing — `--strict` makes them fatal,
 | `overlap` | two beams or plates occupy the same space |
 | `gear mesh` | a gear pair is close to meshing but not actually meshing |
 | `stranded` | a part touches nothing else in the build |
+| `rod in solid` | a pin or shaft runs through a part's plastic instead of one of its holes — half a hole out, or sideways through the edge of a flat beam |
+| `loose` | a pin reaches into fewer than two parts, a shaft into none, or nothing pins or shafts a beam, plate, corner, standoff, gear, wheel, collar or spacer on |
+| `collision` | solid parts fill the same space: a gear overlapping its spacer, a wheel rubbing the rail, a beam through an upright |
+
+The last three read the joint model in `joints.py` — each part's holes, the
+centre line of each pin and shaft, and its nominal envelope — not the
+drawing's bounding boxes. That is how they can tell "through a hole" from
+"through solid plastic". The electronics are drawn for recognition only, with
+no hole positions, so a pin pressed into the brain is taken at its word.
 
 ```
 examples/my-build.py: step 3: gear mesh: 12T and 36T are 3.00 holes apart
@@ -547,6 +605,21 @@ only: pins through beams and shafts through gears are *meant* to interpenetrate,
 so a general collision test would report the entire model. Adding a rule means
 adding both tests — one build that trips it, one plausible build that must not.
 
+### `--inspect`: the build as data
+
+```bash
+iqdraw examples/gear-train.py --inspect
+iqdraw examples/gear-train.py --inspect --at 0,0,1.6
+```
+
+prints the finished build as JSON, without drawing it: every part with its
+step, section, position, axis, box and holes in world coordinates; every joint
+(which pin or shaft goes into which part, and whether it turns `free` or is
+`locked` — a square shaft in a square bore); the problems; the parts list.
+`--at X,Y,Z` adds a `query` naming the parts filling that point and the holes
+running through it. A drawing shows whether a build looks right; this is what
+is actually joined to what, in numbers a script can test.
+
 Mistakes in the spec itself are reported against the line that caused them:
 
 ```
@@ -558,11 +631,12 @@ examples/my-build.py:42: unknown part 'beem_1x8' - did you mean 'beam'?
 
 ## Known limits
 
-**The checks are narrow.** They catch the four mistakes above and nothing else.
-There is still no general collision detection and no notion of whether a joint
-would actually hold, so a spec can describe a build that cannot be assembled and
-be drawn happily. The spec author is responsible for that — which is why the
-demo builds keep their vertical arithmetic explicit and commented.
+**The checks know geometry, not physics.** They catch the mistakes above and
+nothing else. There is no notion of whether a joint is strong enough, whether
+a mechanism can move, or whether a step's parts can physically be fitted in
+the order given, so a spec can still describe a build that cannot be assembled
+and be drawn happily. Collisions are tested between nominal boxes and
+cylinders, so a part's rounded ends and tooth gaps are treated as solid.
 
 **Sizes are not validated against the real VEX catalogue.** Lengths are parsed
 from the name, so `beam_1x9` draws a nine-hole beam whether or not VEX sells

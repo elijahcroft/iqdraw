@@ -6,6 +6,7 @@ argument parsing, exit codes and the messages printed on failure are all
 covered - those are the whole interface for anyone who never opens the source.
 """
 
+import json
 import pathlib
 import subprocess
 import sys
@@ -40,8 +41,9 @@ GOOD = """
 b = Build("Good", done="it is rigid")
 with b.step("Lay the beam down.") as s:
     s.add("beam_2x12", (0, 0, 0))
-with b.step("Pin it.") as s:
+with b.step("Pin a second beam on top.") as s:
     s.add("pin_1x1", (0, 0, 0.25), axis="z", arrow=True)
+    s.add("beam_1x4", (0, 0, 0.5))
 """
 
 
@@ -160,6 +162,29 @@ class TestChecks(_Temp):
     def test_a_clean_build_says_nothing(self):
         r = run(self.spec(GOOD), "-o", self.tmp / "o.html", "--detail", "simple")
         self.assertEqual(r.stderr.strip(), "")
+
+
+class TestInspect(_Temp):
+    def test_it_prints_the_build_as_json(self):
+        r = run(self.spec(GOOD), "--inspect")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data = json.loads(r.stdout)
+        self.assertEqual([p["name"] for p in data["parts"]],
+                         ["beam_2x12", "pin_1x1", "beam_1x4"])
+        self.assertEqual(data["parts"][1]["joined"], [0, 2])
+        self.assertEqual(data["problems"], [])
+
+    def test_at_reports_what_is_at_a_point(self):
+        r = run(self.spec(GOOD), "--inspect", "--at", "0,0,0.25")
+        query = json.loads(r.stdout)["query"]
+        self.assertEqual(query["parts"], [0, 1, 2])
+        self.assertEqual(sorted(h["part"] for h in query["holes"]), [0, 2])
+
+    def test_at_needs_inspect_and_three_numbers(self):
+        spec = self.spec(GOOD)
+        self.assertIn("needs --inspect", run(spec, "--at", "0,0,0").stderr)
+        self.assertIn("three numbers",
+                      run(spec, "--inspect", "--at", "0,0").stderr)
 
 
 class TestErrors(_Temp):
