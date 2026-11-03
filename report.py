@@ -106,9 +106,10 @@ FAMILIES = {
     "corner": ("corner_AxB", "corner_2x4",
                "L bracket: A holes along +x (holes along z), B holes up +z "
                "(holes along x)"),
-    "pin": ("pin_1x1 | pin_1x2 | pin_2x2", "pin_1x1",
+    "pin": ("pin_1x1 | pin_1x2 | pin_2x2 | pin_0x2", "pin_1x1",
             "centred on `at`, along its axis; joins the two parts it "
-            "reaches into"),
+            "reaches into. pin_0x2 has a head: `at` is the head's underside "
+            "and the pin runs a pitch up +z"),
     "shaft": ("shaft_N", "shaft_4",
               "square, runs from 0.5 behind `at` to N-0.5 ahead along its "
               "axis; spins in round holes, locks in square bores"),
@@ -136,24 +137,41 @@ FAMILIES = {
 # pushed into one is taken at its word.  See `joints.modelled`.
 _DRAWN_ONLY = "drawn only - the joint checks do not model its holes yet"
 FAMILIES.update({
-    "lbeam": ("lbeam_AxB", "lbeam_2x3", _DRAWN_ONLY),
+    "lbeam": ("lbeam_AxB", "lbeam_2x3",
+              "right-angle beam: A holes along +x and B along +y, sharing "
+              "hole 0; holes along z"),
     "anglebeam": ("anglebeam_3x3_60 | anglebeam_3x3_45", "anglebeam_3x3_60",
-                  _DRAWN_ONLY),
+                  "three holes along +x, the third the corner, then two more "
+                  "along a leg turned 60 or 45 degrees; holes along z"),
     "lockbeam": ("lockbeam_1xN | lockbeam_2x2 | lockbeam_round_2x2",
-                 "lockbeam_1x3", _DRAWN_ONLY),
+                 "lockbeam_1x3",
+                 "a beam whose centre hole is square, so it turns with its "
+                 "shaft (lockbeam_1xN: odd N only); the 2x2s are centred on "
+                 "that hole with a pin hole at each corner"),
     "connector": ("connector_2w_1x2 | connector_2w_2x2 | connector_2w_2x1 | "
                   "connector_triple_2x2 | connector_chassis_large | ...",
                   "connector_2w_1x2", _DRAWN_ONLY),
-    "standoffconn": ("standoffconn_mini", "standoffconn_mini", _DRAWN_ONLY),
+    "standoffconn": ("standoffconn_mini", "standoffconn_mini",
+                     "a short sleeve centred on `at`: round bore, so it "
+                     "spins on a shaft like a spacer"),
     "plastic": ("plastic_shaft_N | plastic_motor_shaft_N", "plastic_shaft_2",
-                _DRAWN_ONLY),
-    "capped": ("capped_shaft_N", "capped_shaft_2", _DRAWN_ONLY),
-    "motorshaft": ("motorshaft_N", "motorshaft_3", _DRAWN_ONLY),
-    "crankarm": ("crankarm_1x4", "crankarm_1x4", _DRAWN_ONLY),
+                "square, like shaft_N; the motor shaft's tip reaches past "
+                "-0.5 into the motor"),
+    "capped": ("capped_shaft_N", "capped_shaft_2",
+               "a square plastic shaft with a round cap on its -z end"),
+    "motorshaft": ("motorshaft_N", "motorshaft_3",
+                   "metal, square; `at` is the ridge that stops against the "
+                   "motor, the tip below it and the shaft up +z"),
+    "crankarm": ("crankarm_1x4", "crankarm_1x4",
+                 "four holes along +x like a beam, hole 0 square and ringed "
+                 "by a 23-tooth gear (not meshed by the checks)"),
     "tractionlink": ("tractionlink", "tractionlink", _DRAWN_ONLY),
-    "omni": ("omni_N", "omni_200", _DRAWN_ONLY),
+    "omni": ("omni_N", "omni_200",
+             "omni-directional wheel along +z, centred on its axle; square "
+             "bore at `at`"),
     "tyre": ("tyre_N", "tyre_200", _DRAWN_ONLY),
-    "hub": ("hub_N", "hub_200", _DRAWN_ONLY),
+    "hub": ("hub_N", "hub_200", "a travel wheel's hub alone: square bore at "
+                                "`at`"),
     "pulley": ("pulley_20", "pulley_20", _DRAWN_ONLY),
     "string": ("string_AxB", "string_6x3.5", _DRAWN_ONLY),
     "touchled": ("touchled", "touchled", _DRAWN_ONLY),

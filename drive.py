@@ -17,6 +17,9 @@ from .geom import vsub
 # tolerance only has to cover a spec author writing 1.5 for 1.5.
 MESH_TOL = 0.06
 
+# A body is worth reporting when it holds one of these.
+TURNING = ("gear", "wheel", "omni", "hub", "motor")
+
 
 def _teeth(p):
     m = J._LEN.match(p.name)
@@ -65,8 +68,7 @@ def drive(model):
     for p in parts:
         members.setdefault(find(p.index), []).append(p.index)
     bodies = [sorted(m) for m in members.values()
-              if any(parts[i].family in ("gear", "wheel", "motor")
-                     for i in m)]
+              if any(parts[i].family in TURNING for i in m)]
     bodies.sort()
     body_of = {i: n for n, m in enumerate(bodies) for i in m}
     meshes = [(a, b) for a, b in _meshes(parts)

@@ -40,7 +40,8 @@ _SIZE = re.compile(r"^(beam|plate|corner)_(\d+)x(\d+)$")
 _LEN = re.compile(r"^(shaft|standoff|pin|gear|wheel|band)_(\d+)(?:x(\d+))?$")
 
 PIN_SPAN = {"pin_1x1": 1.0, "pin_1x2": 1.5, "pin_2x2": 2.0}
-CYLINDERS = ("gear", "wheel", "collar", "spacer", "washer")
+CYLINDERS = ("gear", "wheel", "collar", "spacer", "washer", "omni", "hub",
+             "standoffconn")
 # Parts drawn for recognition only, with no hole positions to check against.
 UNMODELLED = ("brain", "bumper", "distance", "battery")
 # The parts this model knows the holes and solid of.  Anything else - an
@@ -48,8 +49,14 @@ UNMODELLED = ("brain", "bumper", "distance", "battery")
 # for now: a pin pushed into one counts as a joint, nothing is called solid,
 # colliding or loose against it, and it is not a rod.
 _MODELLED = re.compile(
-    r"^(?:(?:beam|plate|corner)_\d+x\d+|pin_(?:1x1|1x2|2x2)|"
-    r"(?:shaft|standoff|gear|wheel|band)_\d+|collar|spacer|washer|motor)$")
+    r"^(?:(?:beam|plate|corner|lbeam)_\d+x\d+|pin_(?:0x2|1x1|1x2|2x2)|"
+    r"(?:shaft|standoff|gear|wheel|band|omni|hub)_\d+|"
+    r"(?:plastic_shaft|capped_shaft|plastic_motor_shaft|motorshaft)_\d+|"
+    r"lockbeam_1x\d+|lockbeam_2x2|lockbeam_round_2x2|anglebeam_3x3_(?:45|60)|"
+    r"crankarm_1x4|standoffconn_mini|collar|spacer|washer|motor)$")
+# Square rods other than the metal shaft: they run the drawn length.
+_SHAFTLIKE = re.compile(
+    r"^(?:plastic_shaft|capped_shaft|plastic_motor_shaft|motorshaft)_\d+$")
 
 
 def modelled(name):
@@ -115,8 +122,37 @@ def geometry_box(name):
     return box
 
 
+def _flat_cells(name):
+    """One beam-thick cell round each hole of a flat part, from the drawn
+    part's own hole list - for the shapes no single box fits.  Each reaches
+    a little past half a pitch, so the seam between two cells is solid."""
+    h, r = BEAM_T / 2, 0.55
+    return [(x - r, y - r, -h, x + r, y + r, h)
+            for x, y, *_ in get(name, detail="simple").holes]
+
+
 def local_boxes(name):
     """The space a part fills, as one or more boxes in its own coordinates."""
+    h = BEAM_T / 2
+    m = re.match(r"^lbeam_(\d+)x(\d+)$", name)
+    if m:
+        # `a` holes along +x and `b` along +y, sharing hole 0.
+        a, b = int(m[1]), int(m[2])
+        return [(-0.5, -0.5, -h, a - 0.5, 0.5, h),
+                (-0.5, -0.5, -h, 0.5, b - 0.5, h)]
+    if name.startswith("anglebeam_"):
+        return _flat_cells(name)
+    m = re.match(r"^lockbeam_1x(\d+)$", name)
+    if m:
+        return [(-0.5, -0.5, -h, int(m[1]) - 0.5, 0.5, h)]
+    if name == "lockbeam_2x2":
+        return [(-1.0, -1.0, -h, 1.0, 1.0, h)]
+    if name == "lockbeam_round_2x2":
+        return [(-1.0, -1.0, 0.0, 1.0, 1.0, 0.5)]   # the disc, not its boss
+    if name == "crankarm_1x4":
+        x0, y0, _, x1, y1, _ = geometry_box(name)
+        return [(-0.5, -0.5, -h, 3.5, 0.5, h),       # the arm
+                (x0, y0, -h, -x0, y1, h)]            # the gear round hole 0
     m = _SIZE.match(name)
     if m:
         fam, a, b = m[1], int(m[2]), int(m[3])
@@ -141,6 +177,29 @@ def local_holes(name):
         return []
     fam = family(name)
     z = (0.0, 0.0, 1.0)
+    h = BEAM_T / 2
+    if fam in ("lbeam", "anglebeam", "crankarm"):
+        # Round holes along z through a beam-thick part; the crank arm's
+        # hole 0, in the middle of its gear, is square.
+        return [Hole((float(x), float(y), 0.0), z, h,
+                     SQUARE if fam == "crankarm" and i == 0 else ROUND)
+                for i, (x, y, *_) in enumerate(get(name, detail="simple").holes)]
+    m = re.match(r"^lockbeam_1x(\d+)$", name)
+    if m:
+        n = int(m[1])
+        # The centre hole is square; an even length has no one centre.
+        return [Hole((float(i), 0.0, 0.0), z, h,
+                     SQUARE if n % 2 and i == n // 2 else ROUND)
+                for i in range(n)]
+    if name in ("lockbeam_2x2", "lockbeam_round_2x2"):
+        mid = 0.0 if name == "lockbeam_2x2" else 0.25
+        return ([Hole((0.0, 0.0, mid), z, h, SQUARE)]
+                + [Hole((x, y, mid), z, h)
+                   for x in (-0.5, 0.5) for y in (-0.5, 0.5)])
+    if fam in ("omni", "hub"):
+        return [Hole((0.0, 0.0, 0.0), z, geometry_box(name)[5], SQUARE)]
+    if fam == "standoffconn":
+        return [Hole((0.0, 0.0, 0.0), z, geometry_box(name)[5])]
     m = _SIZE.match(name)
     if m:
         a, b = int(m[2]), int(m[3])
@@ -180,6 +239,12 @@ def local_rod(name):
     """(start, end, shape) of a pin's or shaft's centre line, or None."""
     if opaque(name):
         return None
+    if name == "pin_0x2":
+        # The head's underside is the origin; the pin runs a pitch up +z.
+        return (0.0, 0.0, 0.0), (0.0, 0.0, geometry_box(name)[5]), ROUND
+    if _SHAFTLIKE.match(name):
+        z0, z1 = geometry_box(name)[2], geometry_box(name)[5]
+        return (0.0, 0.0, z0), (0.0, 0.0, z1), SQUARE
     if name in PIN_SPAN:
         h = PIN_SPAN[name] / 2
         return (0.0, 0.0, -h), (0.0, 0.0, h), ROUND
