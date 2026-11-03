@@ -27,11 +27,13 @@ iqdraw build.py -o out/build.html         # 4. the booklet, once it is right
   views separately.
 - `--parts` lists the part families; `--part NAME` gives one part's envelope
   and hole table in its own coordinates. `modelled: false` marks a family
-  the joint checks do not model yet (the peg corner connectors, Touch LED,
-  tyres, pulleys and string, traction links, cables): it is drawn, but
-  nothing is checked against it, so prefer modelled parts where either will
-  do. Lock beams, the crank arm, omni wheels and hubs have square holes, so
-  they turn with their shaft.
+  the joint checks do not model yet (Touch LED, tyres, pulleys and string,
+  cables): it is drawn, but nothing is checked against it, so prefer
+  modelled parts where either will do. Lock beams, the crank arm, omni
+  wheels and hubs have square holes, so they turn with their shaft.
+- Corner connectors have built-in **pegs** (half a pin each) as well as
+  holes. `--part NAME` lists both; a hole's `name` is what `hole()` takes,
+  since its centre is mid-plate.
 
 Steps 1–3 skip the booklet and take seconds; the booklet can take tens of
 seconds on a robot-sized build.

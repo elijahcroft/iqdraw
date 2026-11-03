@@ -58,6 +58,7 @@ def report(build, at=None):
         "axis": _vec(p.axis),
         "box": _vec(p.box),
         "holes": [_hole(h) for h in p.holes],
+        "pegs": [{"from": _vec(a), "to": _vec(b)} for a, b, _ in p.pegs],
         "joined": model.joined(p.index),
     } for p in model.parts]
     joints = [{
@@ -148,9 +149,14 @@ FAMILIES.update({
                  "a beam whose centre hole is square, so it turns with its "
                  "shaft (lockbeam_1xN: odd N only); the 2x2s are centred on "
                  "that hole with a pin hole at each corner"),
-    "connector": ("connector_2w_1x2 | connector_2w_2x2 | connector_2w_2x1 | "
-                  "connector_triple_2x2 | connector_chassis_large | ...",
-                  "connector_2w_1x2", _DRAWN_ONLY),
+    "connector": ("connector_2w_1x2 | connector_2w_2x2 | _offset | "
+                  "connector_2w_2x1 | connector_2w_1x2_offset_double | "
+                  "connector_triple_2x2 | connector_chassis_large",
+                  "connector_2w_1x2",
+                  "corner connectors: holes through the block and built-in "
+                  "pegs, each half a pin, that push into the next part. "
+                  "`--part NAME` lists both; `hole()` takes the hole's "
+                  "`name`"),
     "standoffconn": ("standoffconn_mini", "standoffconn_mini",
                      "a short sleeve centred on `at`: round bore, so it "
                      "spins on a shaft like a spacer"),
@@ -165,7 +171,9 @@ FAMILIES.update({
     "crankarm": ("crankarm_1x4", "crankarm_1x4",
                  "four holes along +x like a beam, hole 0 square and ringed "
                  "by a 23-tooth gear (not meshed by the checks)"),
-    "tractionlink": ("tractionlink", "tractionlink", _DRAWN_ONLY),
+    "tractionlink": ("tractionlink", "tractionlink",
+                     "a pad on two pegs one pitch apart, pointing down -z "
+                     "into the holes it sits on"),
     "omni": ("omni_N", "omni_200",
              "omni-directional wheel along +z, centred on its axle; square "
              "bore at `at`"),
@@ -193,7 +201,10 @@ def part_info(name):
         "rod": ({"from": _vec(rod[0]), "to": _vec(rod[1]), "shape": rod[2]}
                 if rod else None),
         "envelope": [_vec(b) for b in J.local_boxes(name)],
-        "holes": [_hole(h) for h in J.local_holes(name)],
+        "holes": [dict(_hole(h), name=_vec(h.name))
+                  for h in J.local_holes(name)],
+        "pegs": [{"from": _vec(a), "to": _vec(b)}
+                 for a, b in J.local_pegs(name)],
     }
 
 
