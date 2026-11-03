@@ -178,16 +178,16 @@ class Ref:
         want = (float(x), float(y), float(z))
         local = joints.local_holes(self.name)
         for i, h in enumerate(local):
-            if all(abs(a - b) < 1e-6 for a, b in zip(h.center, want)):
+            if all(abs(a - b) < 1e-6 for a, b in zip(h.name, want)):
                 break
         else:
             grid = [h for h in local
-                    if all(abs(v - round(v)) < 1e-6 for v in h.center)]
+                    if all(abs(v - round(v)) < 1e-6 for v in h.name)] or local
             if len(grid) > 8:
                 grid = grid[:6] + [None] + grid[-1:]
             listed = ", ".join(
                 "..." if h is None else
-                "(" + ", ".join(f"{v:g}" for v in h.center) + ")"
+                "(" + ", ".join(f"{v:g}" for v in h.name) + ")"
                 for h in grid)
             raise SpecError(f"{self.name} has no hole at ({x:g}, {y:g}, "
                             f"{z:g}) - its holes are at {listed}")

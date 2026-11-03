@@ -345,7 +345,7 @@ COAX_TOL = 0.04
 # Parts a finished build has to hold on with a pin, shaft or standoff.  Leaves
 # out the electronics, whose holes are not modelled, and rubber bands.
 FASTENED = ("beam", "plate", "corner", "standoff", "lbeam", "anglebeam",
-            "lockbeam", "crankarm") + J.CYLINDERS
+            "lockbeam", "crankarm", "connector", "tractionlink") + J.CYLINDERS
 
 
 def _check_rods(model, collided):
@@ -357,27 +357,32 @@ def _check_rods(model, collided):
     is passing through.
     """
     for r in model.parts:
-        if not r.rod:
-            continue
-        pts = J.rod_points(r.rod)
         held = {j.part for j in model.joints if j.rod == r.index}
-        for p in model.parts:
-            if (p is r or p.rod or p.index in held or p.family == "band"
-                    or p.opaque or min(J.overlap(r.box, p.box)) <= 0):
-                continue
-            if not any(J.inside(q, p) for q in pts):
-                continue
-            # Neither end of a rod in the wrong place is "loose" as well -
-            # it is one mistake, already reported.
-            collided.update((r.index, p.index))
-            msg = (f"{r.label} runs through solid {p.label}, "
-                   f"not through one of its holes")
-            near = J.nearest_hole(p, r.rod)
-            if near:
-                c = near[0].center
-                msg += (f" - the nearest hole is at ({c[0]:g}, {c[1]:g}, "
-                        f"{c[2]:g}), {near[1]:.2f} off")
-            yield Problem(max(r.step, p.step), "rod in solid", msg)
+        for rod in ([r.rod] if r.rod else []) + r.pegs:
+            yield from _rod_in_solid(model, collided, r, rod, held)
+
+
+def _rod_in_solid(model, collided, r, rod, held):
+    pts = J.rod_points(rod)
+    reach = J._rod_box(rod)   # a centre line: zero wide, so only < 0 misses
+    what = r.label if rod is r.rod else f"a peg of {r.label}"
+    for p in model.parts:
+        if (p is r or p.rod or p.index in held or p.family == "band"
+                or p.opaque or min(J.overlap(reach, p.box)) < 0):
+            continue
+        if not any(J.inside(q, p) for q in pts):
+            continue
+        # Neither end of a rod in the wrong place is "loose" as well -
+        # it is one mistake, already reported.
+        collided.update((r.index, p.index))
+        msg = (f"{what} runs through solid {p.label}, "
+               f"not through one of its holes")
+        near = J.nearest_hole(p, rod)
+        if near:
+            c = near[0].center
+            msg += (f" - the nearest hole is at ({c[0]:g}, {c[1]:g}, "
+                    f"{c[2]:g}), {near[1]:.2f} off")
+        yield Problem(max(r.step, p.step), "rod in solid", msg)
 
 
 def _check_loose(model, collided):

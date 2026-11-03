@@ -49,7 +49,10 @@ UNMODELLED = ("brain", "bumper", "distance", "battery")
 # for now: a pin pushed into one counts as a joint, nothing is called solid,
 # colliding or loose against it, and it is not a rod.
 _MODELLED = re.compile(
-    r"^(?:(?:beam|plate|corner|lbeam)_\d+x\d+|pin_(?:0x2|1x1|1x2|2x2)|"
+    r"^(?:connector_2w_(?:1x2|2x2)(?:_offset)?|connector_2w_2x1|"
+    r"connector_triple_2x2|connector_chassis_large|"
+    r"connector_2w_1x2_offset_double|tractionlink|"
+    r"(?:beam|plate|corner|lbeam)_\d+x\d+|pin_(?:0x2|1x1|1x2|2x2)|"
     r"(?:shaft|standoff|gear|wheel|band|omni|hub)_\d+|"
     r"(?:plastic_shaft|capped_shaft|plastic_motor_shaft|motorshaft)_\d+|"
     r"lockbeam_1x\d+|lockbeam_2x2|lockbeam_round_2x2|anglebeam_3x3_(?:45|60)|"
@@ -95,6 +98,76 @@ class Hole:
     axis: tuple
     half: float          # half its depth along the axis
     shape: str = ROUND
+    key: tuple = None    # the part's own name for it, where not its centre
+
+    @property
+    def name(self):
+        """The (x, y, z) `ref.hole()` finds this hole by."""
+        return self.key if self.key is not None else self.center
+
+
+def _pegged_table():
+    """
+    The parts with built-in pegs - the corner connectors and the traction
+    link - as `(boxes, holes, pegs)` in their own coordinates, each read off
+    its builder in parts.py.  A peg is a short round rod that pushes into a
+    hole like half a pin.  Hole keys are the part's own hole list; their
+    centres are mid-plate.
+    """
+    y = (0.0, 1.0, 0.0)
+    x = (1.0, 0.0, 0.0)
+    peg = PEG_LEN
+    out = {}
+    for size in ("1x2", "2x2"):
+        for offset in (False, True):
+            top = 1.0 if offset else 0.5
+            rows = (0, -1) if size == "2x2" else (0,)
+            keys = [(float(i), 0.0, float(z)) for z in rows for i in (0, 1)]
+            if offset:
+                keys += [(0.5, 0.0, z + 0.5) for z in rows]
+            out[f"connector_2w_{size}" + ("_offset" if offset else "")] = (
+                # The plate only.  The flange under the pegs overhangs the
+                # +y face, but whether what is pinned there clears it is
+                # molding detail - so it is left out rather than risk calling
+                # a real build a collision.
+                [(-0.5, -0.5, rows[-1] - 0.5, 1.5, 0.0, top)],
+                [Hole((k[0], -0.25, k[2]), y, 0.25, key=k) for k in keys],
+                [((i, 0.0, top), (i, 0.0, top + peg)) for i in (0.0, 1.0)])
+    out["connector_2w_2x1"] = (
+        [(-0.35, -0.49, -0.45, 1.35, 0.49, 0.0),
+         (-0.35, -0.49, -1.98, 0.35, 0.49, -0.45)],
+        [Hole((0.0, 0.0, z), y, 0.49) for z in (-0.5, -1.5)],
+        [((i, 0.0, 0.0), (i, 0.0, peg)) for i in (0.0, 1.0)])
+    out["connector_triple_2x2"] = (
+        [(-1.0, -0.5, -1.0, 1.0, 0.5, 1.0)],
+        [Hole((i, 0.0, z), y, 0.5) for i in (-0.5, 0.5) for z in (-0.5, 0.5)]
+        + [Hole((0.0, 0.0, 0.0), y, 0.5)],
+        [((i, 0.0, 1.0), (i, 0.0, 1.0 + peg)) for i in (-0.5, 0.5)]
+        + [((i, 0.0, -1.0), (i, 0.0, -1.0 - peg)) for i in (-0.5, 0.5)]
+        + [((1.0, 0.0, z), (1.0 + peg, 0.0, z)) for z in (-0.5, 0.5)])
+    out["connector_chassis_large"] = (
+        [(-0.5, -0.5, -0.5, 0.5, 1.5, 0.5),
+         (-0.5, -0.5, -1.5, 0.5, 0.5, -0.5)],
+        [Hole(c, x, 0.5) for c in ((0.0, 0.0, 0.0), (0.0, 1.0, 0.0),
+                                   (0.0, 0.0, -1.0))],
+        [((0.0, j, 0.5), (0.0, j, 0.5 + peg)) for j in (0.0, 1.0)]
+        + [((0.0, -0.5, z), (0.0, -0.5 - peg, z)) for z in (0.0, -1.0)])
+    out["connector_2w_1x2_offset_double"] = (
+        [(-0.5, -0.5, -0.5, 1.5, 0.5, 1.0)],
+        [Hole(c, y, 0.5) for c in ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+                                   (0.5, 0.0, 0.5))],
+        [((i, 0.0, 1.0), (i, 0.0, 1.0 + peg)) for i in (0.0, 1.0)]
+        + [((i, 0.0, -0.5), (i, 0.0, -0.5 - peg)) for i in (0.0, 1.0)])
+    out["tractionlink"] = (
+        [(-0.22, -0.25, 0.0, 1.28, 0.25, 0.33)],
+        [],
+        [((i, 0.0, 0.0), (i, 0.0, -0.5)) for i in (0.0, 1.0)])
+    return out
+
+
+# How far a connector's peg stands proud of its face: the 0.48 the builders
+# draw it, which is half a pin.
+PEG_LEN = 0.48
 
 
 _geom_boxes = {}
@@ -131,8 +204,26 @@ def _flat_cells(name):
             for x, y, *_ in get(name, detail="simple").holes]
 
 
+_PEGGED = None
+
+
+def _pegged(name):
+    global _PEGGED
+    if _PEGGED is None:
+        _PEGGED = _pegged_table()
+    return _PEGGED.get(name)
+
+
+def local_pegs(name):
+    """[(start, end)] of each built-in peg, in the part's own coordinates."""
+    hit = _pegged(name)
+    return list(hit[2]) if hit else []
+
+
 def local_boxes(name):
     """The space a part fills, as one or more boxes in its own coordinates."""
+    if _pegged(name):
+        return list(_pegged(name)[0])
     h = BEAM_T / 2
     m = re.match(r"^lbeam_(\d+)x(\d+)$", name)
     if m:
@@ -175,6 +266,8 @@ def local_boxes(name):
 def local_holes(name):
     if opaque(name):
         return []
+    if _pegged(name):
+        return list(_pegged(name)[1])
     fam = family(name)
     z = (0.0, 0.0, 1.0)
     h = BEAM_T / 2
@@ -310,6 +403,7 @@ class Placed:
     boxes: list = field(default_factory=list)
     holes: list = field(default_factory=list)   # [Hole] in world coordinates
     rod: tuple = None                            # (a, b, shape) in world
+    pegs: list = field(default_factory=list)     # [(a, b, ROUND)] in world
 
     @property
     def box(self):
@@ -340,8 +434,10 @@ def place(index, step, name, color, tf):
     rod = local_rod(name)
     if rod:
         rod = (tf.point(rod[0]), tf.point(rod[1]), rod[2])
+    pegs = [(tf.point(a), tf.point(b), ROUND) for a, b in local_pegs(name)]
     return Placed(index, step, name, color, tf,
-                  [world_box(tf, b) for b in local_boxes(name)], holes, rod)
+                  [world_box(tf, b) for b in local_boxes(name)], holes, rod,
+                  pegs)
 
 
 def engagement(rod, hole):
@@ -426,28 +522,33 @@ def analyse(build):
     joints = []
     for r in items:
         sockets = r.holes if r.family == "standoff" else []
-        if not (r.rod or sockets):
+        rods = ([r.rod] if r.rod else []) + r.pegs
+        if not (rods or sockets):
             continue
+        reach = union([r.box] + [_rod_box(q) for q in r.pegs])
         for p in items:
-            if p is r or not _near(r.box, p.box):
+            if p is r or not _near(reach, p.box):
                 continue
             if not p.holes:
                 # Electronics: their holes are not modelled, so a pin pushed
                 # into one is taken at its word rather than called solid.
-                hit = (r.rod and (p.family in UNMODELLED or p.opaque) and next(
-                    (q for q in rod_points(r.rod) if inside(q, p)), None))
-                if hit:
-                    joints.append(Joint(r.index, p.index, -1, r.family,
-                                        "free", hit))
+                for rod in rods:
+                    hit = ((p.family in UNMODELLED or p.opaque) and next(
+                        (q for q in rod_points(rod) if inside(q, p)), None))
+                    if hit:
+                        joints.append(Joint(r.index, p.index, -1,
+                                            _kind(r, rod), "free", hit))
+                        break
                 continue
+            for rod in rods:
+                for h_i, h in enumerate(p.holes):
+                    if engagement(rod, h):
+                        fit = ("locked" if rod[2] == SQUARE
+                               and h.shape == SQUARE else "free")
+                        joints.append(Joint(r.index, p.index, h_i,
+                                            _kind(r, rod), fit, h.center))
+                        break
             for h_i, h in enumerate(p.holes):
-                if r.rod and engagement(r.rod, h):
-                    kind = "pin" if r.family == "pin" else "shaft"
-                    fit = ("locked" if r.rod[2] == SQUARE and h.shape == SQUARE
-                           else "free")
-                    joints.append(Joint(r.index, p.index, h_i, kind, fit,
-                                        h.center))
-                    break
                 # Two standoff ends touching are not fastened; one sitting on
                 # a beam's hole is how standoffs are stood up.
                 if p.family != "standoff" and any(
@@ -456,6 +557,18 @@ def analyse(build):
                                         "free", h.center))
                     break
     return Model(items, joints)
+
+
+def _kind(part, rod):
+    if rod is not part.rod:
+        return "peg"
+    return "pin" if part.family == "pin" else "shaft"
+
+
+def _rod_box(rod):
+    a, b, _ = rod
+    return tuple(min(a[i], b[i]) for i in range(3)) + \
+        tuple(max(a[i], b[i]) for i in range(3))
 
 
 def inside(p, item, margin=0.03):

@@ -650,10 +650,12 @@ centre line of each pin and shaft, and its nominal envelope — not the
 drawing's bounding boxes. That is how they can tell "through a hole" from
 "through solid plastic". The electronics are drawn for recognition only, with
 no hole positions, so a pin pressed into the brain is taken at its word. So
-is every family the joint model does not cover yet — the corner connectors
-with built-in pegs, the Touch LED, tyres, pulleys and string, traction links
-and cables, which `iqdraw --parts` lists as `modelled: false`: they are
-drawn, but nothing is called solid, colliding or loose against them.
+is every family the joint model does not cover yet — the Touch LED, tyres,
+pulleys and string, and cables, which `iqdraw --parts` lists as
+`modelled: false`: they are drawn, but nothing is called solid, colliding or
+loose against them. The corner connectors' and traction link's built-in pegs
+are modelled as half pins, so a peg into solid plastic is reported like a
+pin.
 
 ```
 examples/my-build.py: step 3: gear mesh: 12T and 36T are 3.00 holes apart

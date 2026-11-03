@@ -119,6 +119,52 @@ class TestWheels(unittest.TestCase):
         self.assertIn(["omni_200", "shaft_4"], bodies)
 
 
+class TestPegs(unittest.TestCase):
+    """Corner connectors and the traction link: built-in pegs, each half a
+    pin, that push into the next part's holes."""
+
+    def _connector(self, beam_at):
+        b = Build("x")
+        with b.step() as s:
+            c = s.add("connector_2w_1x2", (0, 0, 0))
+            s.add("beam_1x4", beam_at)                  # pressed on the pegs
+            s.add("beam_1x4", (0, 0.25, 0), rot=(90, 0, 0))
+            s.add("pin_1x1", c.hole(0, side="+y"))
+            s.add("pin_1x1", c.hole(1, side="+y"))
+        return b
+
+    def test_a_beam_pressed_onto_the_pegs_is_joined(self):
+        b = self._connector((0, 0, 0.75))
+        self.assertEqual(_kinds(b), [])
+        model = J.analyse(b)
+        self.assertIn("peg", {j.kind for j in model.joints})
+
+    def test_a_peg_into_solid_plastic_is_caught(self):
+        b = self._connector((0.5, 0, 0.75))
+        problems = [p for p in check(b) if p.kind == "rod in solid"]
+        self.assertEqual(len(problems), 1)
+        self.assertIn("a peg of connector_2w_1x2", problems[0].message)
+
+    def test_hole_takes_the_parts_own_hole_names(self):
+        b = Build("x")
+        with b.step() as s:
+            c = s.add("connector_2w_1x2_offset", (0, 0, 0))
+        # Named (0.5, 0, 0.5) by the part; its centre is mid-plate.
+        self.assertEqual(c.hole(0.5, 0, 0.5), (0.5, -0.25, 0.5))
+
+    def test_a_traction_link_pegs_into_a_beam(self):
+        b = Build("x")
+        with b.step() as s:
+            beam = s.add("beam_1x4", (0, 0, 0))
+            s.add("tractionlink", beam.hole(1, side="up"))
+        self.assertEqual(_kinds(b), [])
+
+    def test_part_info_lists_the_pegs(self):
+        from iqdraw.report import part_info
+        info = part_info("connector_triple_2x2")
+        self.assertEqual(len(info["pegs"]), 6)
+
+
 class TestEveryFamily(unittest.TestCase):
     def test_every_catalogued_part_can_be_checked_and_inspected(self):
         for fam in catalogue():
