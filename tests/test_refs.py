@@ -10,7 +10,7 @@ import unittest
 
 import support  # noqa: F401  (makes the checkout importable)
 
-from iqdraw import Build, Point
+from iqdraw import Assembly, Build, Point
 from iqdraw.check import check
 from iqdraw.spec import SpecError
 
@@ -160,6 +160,58 @@ class TestGearTrainWithoutArithmetic(unittest.TestCase):
         self.assertEqual(_positions(b),
                          _positions(support.load_example("gear-train")))
         self.assertEqual(check(b), [])
+
+
+class TestAssemblyCopies(unittest.TestCase):
+    """place() returns the copy, which maps Refs made inside the assembly."""
+
+    def _side(self):
+        a = Assembly("Side")
+        with a.step("rail") as s:
+            rail = s.add("beam_2x12", (0, 0, 0), rot=(90, 0, 0))
+        return a, rail
+
+    def test_a_ref_lands_where_the_copy_went(self):
+        a, rail = self._side()
+        b = Build("x")
+        left = b.place(a, at=(0, 6, 0))
+        self.assertEqual(left(rail).hole(3), (3, 6, 0))
+        self.assertEqual(left(rail).face("-y"), 5.75)
+
+    def test_a_mirrored_copy_turns_its_faces_round(self):
+        a, rail = self._side()
+        b = Build("x")
+        right = b.place(a, at=(0, 0, 0), mirror="y", note="again")
+        self.assertEqual(right(rail).face("+y"), 0.25)
+        self.assertEqual(abs(right(rail).hole(0).axis[1]), 1.0)
+
+    def test_points_and_lists_map_too(self):
+        a, rail = self._side()
+        b = Build("x")
+        c = b.place(a, at=(2, 0, 1))
+        self.assertEqual(c(rail.hole(1)), (3, 0, 1))
+        self.assertEqual(len(c([rail, rail])), 2)
+
+    def test_parts_placed_against_a_copy_pass_the_checks(self):
+        a, rail = self._side()
+        b = Build("x")
+        left = b.place(a, at=(0, 6, 0))
+        with b.step("pin") as s:
+            r = left(rail)
+            s.add("pin_1x1", r.hole(3, side="-y"))
+            s.add("beam_1x4", r.hole(3, side="-y"), rot=(90, 0, 0), on=r,
+                  side="-y")
+        self.assertEqual([p.kind for p in check(b)], [])
+
+    def test_nested_refs_go_through_their_own_copy_first(self):
+        inner, rail = self._side()
+        outer = Assembly("Outer")
+        copy = outer.place(inner, at=(0, 1, 0))
+        b = Build("x")
+        top = b.place(outer, at=(0, 0, 2))
+        self.assertEqual(top(copy(rail)).hole(0), (0, 1, 2))
+        with self.assertRaises(SpecError):
+            top(rail)
 
 
 if __name__ == "__main__":

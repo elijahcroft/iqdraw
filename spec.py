@@ -242,6 +242,48 @@ def _rest_on(part, m, pos, on, side):
     return tuple(out)
 
 
+class Instance:
+    """
+    One copy of an assembly, as `place()` returns it.  Call it with a Ref
+    made inside the assembly to get that part where this copy landed:
+
+        left = b.place(side_frame, at=(0, 6, 0))
+        left(rail).face("-y")          # the rail's inside face, in b's terms
+        left(brackets)                 # a list maps to a list
+        left(rail.hole(3))             # so does a Point
+
+    A Ref from an assembly nested inside this one goes through that
+    assembly's own `place()` result first.
+    """
+
+    def __init__(self, assembly, outer):
+        self.assembly = assembly
+        self.outer = outer
+
+    def __call__(self, item):
+        if isinstance(item, Ref):
+            if not any(name == item.name and p.tf == item.tf
+                       for s in self.assembly.steps
+                       for p, name, _, _ in s.items):
+                raise SpecError(
+                    f"{item!r} is not a part of {self._what()} - a Ref from "
+                    f"an assembly nested inside it goes through that "
+                    f"assembly's place() result first")
+            return Ref(item.name, item.tf.then(self.outer))
+        if isinstance(item, Point):
+            return Point(self.outer.point(item),
+                         None if item.axis is None
+                         else self.outer.direction(item.axis))
+        if isinstance(item, (list, tuple)):
+            return [self(i) for i in item]
+        raise SpecError(f"an assembly copy maps Refs, Points and lists of "
+                        f"them, not {type(item).__name__}")
+
+    def _what(self):
+        name = getattr(self.assembly, "name", "")
+        return f"assembly {name!r}" if name else "this assembly"
+
+
 @dataclass
 class Section:
     """
@@ -365,6 +407,9 @@ class _Steps:
         The assembly's steps keep their own notes, captions and camera angles;
         only their coordinates move.  Assemblies nest: an arm made of two
         link modules places them the same way a build places the arm.
+
+        Returns an `Instance`: call it with a Ref made inside the assembly
+        to get that part where this copy landed - `left(rail).face("-y")`.
         """
         outer = Transform(_orient(rot, mirror=mirror),
                           tuple(float(v) for v in at))
@@ -387,13 +432,13 @@ class _Steps:
             s = self.step(note=note, caption=caption)
             for src in assembly.steps:
                 s.items.extend(moved(src.items, arrows=False))
-            return self
+            return Instance(assembly, outer)
 
         for src in assembly.steps:
             s = self.step(note=src.note, view_rz=src.view_rz,
                           caption=src.caption)
             s.items.extend(moved(src.items))
-        return self
+        return Instance(assembly, outer)
 
     def inventory(self):
         total = Counter()

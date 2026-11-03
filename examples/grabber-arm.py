@@ -29,14 +29,13 @@ Coordinates are 0-BASED.  The robot faces -x: the arm reaches out that way.
 
 from iqdraw import Assembly, Build
 
-from _modules import RAIL_Y, add_chassis
+from _modules import add_chassis
 
 PIVOT_Z = 5            # the tower's top hole, five up from the rail's bottom
 ARM_REACH = (0, -4, -5)  # pivot hole, then the two holes the fingers pin to
 TIE_X = -2             # the standoff that makes both arm beams one arm
 STAND = (0, -90, 90)   # a beam stood upright, holes facing along y
-RAIL_FACE_Y = (0.25, RAIL_Y - 0.25)   # the inside face of each rail
-INSIDE = ("+y", "-y")  # which way is inwards from the left rail, the right
+INSIDE = ("+y", "-y")  # which way is inwards from each rail, y = 0 first
 OUTSIDE = {"+y": "-y", "-y": "+y"}
 
 # ------------------------------------------------------------------- a finger
@@ -84,7 +83,7 @@ b = Build(
     context_detail="simple",
 )
 
-add_chassis(b, first_section="One side frame")
+chassis = add_chassis(b, first_section="One side frame")
 
 # ------------------------------------------------------------------- the tower
 
@@ -96,16 +95,16 @@ with b.step("Push two pins into the inside of each rail at the front hole, "
             "one in each row.",
             caption="Push each one halfway in. The tower goes on the "
                     "other half.") as s:
-    for y, side in zip(RAIL_FACE_Y, INSIDE):
-        s.many("pin_1x1", [(0, y, r) for r in (0, 1)], axis="y",
+    for rail, side in zip(chassis.rails, INSIDE):
+        s.many("pin_1x1", [rail.hole(0, r, side=side) for r in (0, 1)],
                arrow=OUTSIDE[side])
 
 with b.step("Press a 1x6 beam onto each pair of pins, standing straight up.",
             caption="Both towers stand upright and face each other "
                     "across the robot.") as s:
-    towers = [s.add("beam_1x6", (0, y, 0), rot=STAND, on=y, side=side,
+    towers = [s.add("beam_1x6", rail.hole(0), rot=STAND, on=rail, side=side,
                     arrow=OUTSIDE[side])
-              for y, side in zip(RAIL_FACE_Y, INSIDE)]
+              for rail, side in zip(chassis.rails, INSIDE)]
 
 # --------------------------------------------------------------------- the arm
 

@@ -28,7 +28,6 @@ from iqdraw import Assembly, Build
 AXLE_X = (1, 5, 10)
 BRACKET_X = (0, 3, 8)   # the front bracket carries the bumper, the others the deck
 FAR_SIDE_Y = 8
-FOOT_TOP = 2.25         # top face of the brackets' feet, where beams rest
 DECK_Y = (2.5, 5.5)     # deck pin rows, clear of the bracket pins beneath
 
 EDGE = (90, 0, 0)       # a beam turned up on edge: holes face along y
@@ -87,9 +86,9 @@ with side_module.step(
         "Press a 2x2 corner bracket onto each pair of pins, foot on top and "
         "pointing inwards.",
         caption="All three feet sit level, just above the rail.") as s:
-    for x in BRACKET_X:
-        s.add("corner_2x2", rail.hole(x, 1) + (0, -0.5, 1), rot=HANG,
-              arrow="+y")
+    brackets = [s.add("corner_2x2", rail.hole(x, 1) + (0, -0.5, 1),
+                      rot=HANG, arrow="+y")
+                for x in BRACKET_X]
 
 
 # --------------------------------------------------------------- whole rover
@@ -115,13 +114,13 @@ b.section(
     "First wheel module",
     "Build one complete side. The second side is the same module mirrored.",
 )
-b.place(side_module, at=(0, FAR_SIDE_Y, 0))
+far = b.place(side_module, at=(0, FAR_SIDE_Y, 0))
 
 b.section(
     "Mirrored wheel module",
     "Repeat the same steps, but keep every wheel on the outside.",
 )
-b.place(
+near = b.place(
     side_module,
     at=(0, 0, 0),
     mirror="y",
@@ -130,8 +129,15 @@ b.place(
 
 # ---------------------------------------------------------- bridge and deck
 
-# The two inboard feet of each pair of brackets, in rover coordinates.
-FEET_Y = (0.5, 1.5, FAR_SIDE_Y - 1.5, FAR_SIDE_Y - 0.5)
+# Each pair of brackets facing each other across the rover, front to back,
+# where the two copies of the side module put them.
+pairs = [(near(br), far(br)) for br in brackets]
+
+
+def feet(pair, holes=(0, 1)):
+    """The tops of a pair's foot holes, where pins go down into them."""
+    return [br.hole(i, side="up") for br in pair for i in holes]
+
 
 b.section(
     "Bridge the chassis",
@@ -142,16 +148,17 @@ b.section(
 with b.step(
         "Lay a 1x8 beam across the brackets at the middle and at the back.",
         caption="Each beam reaches from one bracket foot to the other.") as s:
-    cross = s.many("beam_1x8", [(x, 0.5, 0) for x in BRACKET_X[1:]],
-                   rot=ACROSS, on=FOOT_TOP, arrow=True)
+    cross = [s.add("beam_1x8", pair[0].hole(0), rot=ACROSS, on=list(pair),
+                   arrow=True)
+             for pair in pairs[1:]]
 
 with b.step(
         "Pin both cross beams down into the bracket feet - four pins per "
         "beam.",
         caption="Use both holes of every foot. This is what stops the long "
                 "chassis from racking.") as s:
-    s.many("pin_1x1", [(x, y, FOOT_TOP) for x in BRACKET_X[1:]
-                       for y in FEET_Y], axis="z", arrow=True)
+    s.many("pin_1x1", [p for pair in pairs[1:] for p in feet(pair)],
+           arrow=True)
 
 with b.step(
         "Set a 4x8 plate on the two cross beams to make the equipment deck.",
@@ -191,10 +198,12 @@ b.section(
 with b.step(
         "Lay a red 2x8 beam across the front brackets.",
         caption="Pin it down through the inner hole of each front foot.") as s:
-    bumper_beam = s.add("beam_2x8", (1, 0.5, 0), rot=ACROSS, color="red",
-                        on=FOOT_TOP, arrow=True)
-    s.many("pin_1x1", [(0, y, FOOT_TOP) for y in FEET_Y[1:3]], axis="z",
-           arrow=True)
+    # Two holes wide: its second row lies over the feet, its first in
+    # front of them, one hole further forward.
+    bumper_beam = s.add("beam_2x8", pairs[0][0].hole(0) + (1, 0, 0),
+                        rot=ACROSS, color="red", on=list(pairs[0]),
+                        arrow=True)
+    s.many("pin_1x1", feet(pairs[0], holes=(1,)), arrow=True)
 
 with b.step(
         "Mount the bumper switch in the middle of the red beam.",

@@ -59,6 +59,9 @@ s.add("gear_36", g.meshing("gear_36", "+x"))               # meshes, on the grid
 - `on=` takes a `Ref`, a list of them, or a coordinate. `side=` is the
   direction to stack in.
 - A `Ref` is in the coordinates of the `Build` or `Assembly` it was made in.
+  `b.place(assembly, ...)` returns the copy: `left = b.place(side, at=…)`,
+  then `left(rail)` is that rail where the copy put it, ready for `hole()`,
+  `face()` and `on=`. Never re-derive a placed assembly's faces by hand.
 
 ## Orientations that come up
 

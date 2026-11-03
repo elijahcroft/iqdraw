@@ -362,6 +362,20 @@ with `_` is a library, not a build**, and nothing tries to render it.
   instead of repeating all of its steps.
 - `section` — convenience for calling `section()` first.
 
+It returns the placed copy. Call that with a `Ref` made inside the assembly to
+get the part where this copy landed, so the build can attach to it without
+working out where it went:
+
+```python
+left = b.place(side_frame, at=(0, 6, 0))
+right = b.place(side_frame, mirror="y", note="Build a second one, mirrored.")
+s.add("pin_1x1", left(rail).hole(0, 1, side="-y"))   # the rail's inside face
+s.add("beam_1x6", right(bracket).hole(0), on=[left(bracket), right(bracket)])
+```
+
+A list or a `Point` maps the same way. A `Ref` from an assembly nested inside
+another goes through each `place()` result in turn: `top(claw_copy(finger))`.
+
 **`mirror` is not a rotation, and that is the whole point of it.** No rotation
 turns a left side into a right side; only a reflection does. Insertion arrows
 are reflected with the module, so a shaft that pushed out along `+y` on one

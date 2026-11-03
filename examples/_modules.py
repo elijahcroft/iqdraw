@@ -26,6 +26,8 @@ file is worked out by hand.
 Coordinates are 0-BASED.
 """
 
+from types import SimpleNamespace
+
 from iqdraw import Assembly
 
 AXLE_X = (1, 10)     # the two axles, near each end of the rail
@@ -86,9 +88,9 @@ with side_frame.step(
         "pointing inwards.",
         caption="The foot sits just above the rail. The cross beams rest "
                 "on it.") as s:
-    for x in BRACKET_X:
-        s.add("corner_2x2", rail.hole(x, 1) + (0, -0.5, 1), rot=HANG,
-              arrow="+y")
+    brackets = [s.add("corner_2x2", rail.hole(x, 1) + (0, -0.5, 1),
+                      rot=HANG, arrow="+y")
+                for x in BRACKET_X]
 
 
 def add_chassis(b, first_section="One side frame", brain=True):
@@ -97,55 +99,56 @@ def add_chassis(b, first_section="One side frame", brain=True):
 
     Two side frames, the second mirrored, joined by two cross beams on the
     corner brackets - and the brain on top unless the build wants that space
-    for something else.  Returns the two cross beams, for anything that sits
-    on them.
+    for something else.  Returns what a build adds to next: `.rails`, the two
+    rails as placed (y = 0 first), and `.cross`, the two cross beams.
     """
     b.section(
         first_section,
         "Build this once. You will build a second one just like it, the "
         "other way round.",
     )
-    b.place(side_frame, at=(0, RAIL_Y, 0))
+    left = b.place(side_frame, at=(0, RAIL_Y, 0))
 
     b.section(
         "The other side frame",
         "The same steps again. The wheels still go on the outside - which is "
         "now the other way round.",
     )
-    b.place(side_frame, at=(0, 0, 0), mirror="y",
-            note="Build a second side frame exactly like the first, and set "
-                 "it down mirrored - wheels facing out.",
-            caption="Hold them side by side. They should look like a pair "
-                    "of hands, not like two left hands.")
+    right = b.place(side_frame, at=(0, 0, 0), mirror="y",
+                    note="Build a second side frame exactly like the first, and set "
+                         "it down mirrored - wheels facing out.",
+                    caption="Hold them side by side. They should look like a "
+                            "pair of hands, not like two left hands.")
 
     b.section("Joining the two sides",
               "This is what turns two rails into a robot.")
 
-    # The brackets' feet, in chassis coordinates: two holes each, inboard of
-    # the rail they hang on.  Their top face is where the cross beams sit.
-    feet_y = (0.5, 1.5, RAIL_Y - 1.5, RAIL_Y - 0.5)
-    foot_top = 2.25
+    # Each pair of brackets facing each other across the chassis, front and
+    # back, where the two copies of the side frame put them.  A cross beam
+    # rests on a pair's feet and pins down through both holes of each foot.
+    pairs = [(right(br), left(br)) for br in brackets]
+
+    def feet(pair):
+        return [br.hole(i, side="up") for br in pair for i in (0, 1)]
 
     cross = []
     with b.step("Lay a 1x6 beam across the two front brackets.",
                 caption="Turn it a quarter turn so it runs across the "
                         "chassis, not along it.") as s:
-        cross.append(s.add("beam_1x6", (BRACKET_X[0], 0.5, 0), rot=(0, 0, 90),
-                           on=foot_top, arrow=True))
+        cross.append(s.add("beam_1x6", pairs[0][0].hole(0), rot=(0, 0, 90),
+                           on=list(pairs[0]), arrow=True))
 
     with b.step("Push four connector pins down through the cross beam into "
                 "the bracket feet underneath.",
                 caption="Two pins into each foot. One pin per foot would let "
                         "the frame pivot - the second pin is what stops "
                         "it.") as s:
-        s.many("pin_1x1", [(BRACKET_X[0], y, foot_top) for y in feet_y],
-               axis="z", arrow=True)
+        s.many("pin_1x1", feet(pairs[0]), arrow=True)
 
     with b.step("Repeat at the back: one cross beam, four more pins.") as s:
-        cross.append(s.add("beam_1x6", (BRACKET_X[1], 0.5, 0), rot=(0, 0, 90),
-                           on=foot_top))
-        s.many("pin_1x1", [(BRACKET_X[1], y, foot_top) for y in feet_y],
-               axis="z", arrow=True)
+        cross.append(s.add("beam_1x6", pairs[1][0].hole(0), rot=(0, 0, 90),
+                           on=list(pairs[1])))
+        s.many("pin_1x1", feet(pairs[1]), arrow=True)
 
     if brain:
         b.section("The brain")
@@ -154,4 +157,4 @@ def add_chassis(b, first_section="One side frame", brain=True):
                     caption="It should sit flat. If it rocks, a pin "
                             "underneath is not pushed all the way home.") as s:
             s.add("brain", (2, 0.5, 0), on=cross, arrow=True)
-    return cross
+    return SimpleNamespace(rails=(right(rail), left(rail)), cross=cross)
