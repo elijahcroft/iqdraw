@@ -41,6 +41,9 @@ seconds on a robot-sized build.
 - Nominal thicknesses: beam 0.5, plate 0.25, gear 0.5, spacer 0.25,
   washer 0.12, collar 0.36. Two stacked beams are 0.5 apart; the pin joining
   them is centred on their shared face.
+- The booklet's camera sits out on the `(+1, +1, +1)` corner, so with
+  `view_rz=0` `+x` is drawn to the lower left and `+y` to the lower right.
+  The top view reads like a map: `+x` right, `+y` up.
 
 ## Place against parts, not at numbers
 
@@ -114,8 +117,5 @@ part in a scratch build and print `ref.box` and `ref.hole(…).axis`, or run
 
 ## Known quirks
 
-- The drawings are mirror images: `+x` is drawn to the lower right and `+y` to
-  the lower left. Views and booklets agree with each other, but don't write
-  "left" or "right" in a step note from the coordinates alone.
 - Size names parse any number, so `beam_1x9` draws fine. Check sizes against a
   real kit.

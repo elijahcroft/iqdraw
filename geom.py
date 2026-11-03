@@ -175,9 +175,16 @@ _S30 = 0.5
 
 
 def project(p):
-    """(x, y, z) in grid units -> (sx, sy) in screen units (y already flipped)."""
+    """
+    (x, y, z) in grid units -> (sx, sy) in screen units (y already flipped).
+
+    What a camera out at (1, 1, 1) sees, looking back at the origin with +z
+    up: +y runs to the lower right, +x to the lower left.  `depth`, `VIEW`
+    and the culling are all from that same camera, so the drawing is the
+    model as it is, not its mirror image.
+    """
     x, y, z = p
-    return ((x - y) * _C30, (x + y) * _S30 - z)
+    return ((y - x) * _C30, (x + y) * _S30 - z)
 
 
 def depth(p):

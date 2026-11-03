@@ -418,7 +418,10 @@ def _steps_html(build, svgs, n_steps, styles, prev_angle):
         turn = ""
         if prev_angle is not None and abs(angle - prev_angle) > 1e-6:
             delta = (angle - prev_angle + 180) % 360 - 180
-            way = "left" if delta > 0 else "right"
+            # The way the side nearest the reader moves.  A positive angle is
+            # anticlockwise seen from above, which carries the near side to
+            # the right - in the drawing and in the reader's hands alike.
+            way = "right" if delta > 0 else "left"
             turn = (f'<p class="turn">&#8635; Turn the model '
                     f"{abs(delta):g}&deg; to the {way}</p>")
         prev_angle = angle

@@ -107,18 +107,18 @@ def add_chassis(b, first_section="One side frame", brain=True):
         "Build this once. You will build a second one just like it, the "
         "other way round.",
     )
-    left = b.place(side_frame, at=(0, RAIL_Y, 0))
+    right = b.place(side_frame, at=(0, RAIL_Y, 0))
 
     b.section(
         "The other side frame",
         "The same steps again. The wheels still go on the outside - which is "
         "now the other way round.",
     )
-    right = b.place(side_frame, at=(0, 0, 0), mirror="y",
-                    note="Build a second side frame exactly like the first, and set "
-                         "it down mirrored - wheels facing out.",
-                    caption="Hold them side by side. They should look like a "
-                            "pair of hands, not like two left hands.")
+    left = b.place(side_frame, at=(0, 0, 0), mirror="y",
+                   note="Build a second side frame exactly like the first, "
+                        "and set it down mirrored - wheels facing out.",
+                   caption="Hold them side by side. They should look like a "
+                           "pair of hands, not like two left hands.")
 
     b.section("Joining the two sides",
               "This is what turns two rails into a robot.")
@@ -126,7 +126,7 @@ def add_chassis(b, first_section="One side frame", brain=True):
     # Each pair of brackets facing each other across the chassis, front and
     # back, where the two copies of the side frame put them.  A cross beam
     # rests on a pair's feet and pins down through both holes of each foot.
-    pairs = [(right(br), left(br)) for br in brackets]
+    pairs = [(left(br), right(br)) for br in brackets]
 
     def feet(pair):
         return [br.hole(i, side="up") for br in pair for i in (0, 1)]
@@ -157,4 +157,4 @@ def add_chassis(b, first_section="One side frame", brain=True):
                     caption="It should sit flat. If it rocks, a pin "
                             "underneath is not pushed all the way home.") as s:
             s.add("brain", (2, 0.5, 0), on=cross, arrow=True)
-    return SimpleNamespace(rails=(right(rail), left(rail)), cross=cross)
+    return SimpleNamespace(rails=(left(rail), right(rail)), cross=cross)

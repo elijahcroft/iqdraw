@@ -12,6 +12,7 @@ from html.parser import HTMLParser
 import support
 
 from iqdraw import Build, booklet, parts
+from iqdraw.geom import mat_apply, project, rot_z
 
 
 def _sample(done="both gears turn together"):
@@ -134,6 +135,17 @@ class TestOrientation(unittest.TestCase):
 
     def test_every_step_has_something_to_tick(self):
         self.assertEqual(self.html.count('type="checkbox"'), 3)
+
+    def test_the_turn_banner_names_the_way_the_near_side_moves(self):
+        b = Build("Turning")
+        b.step("flat").add("beam_1x4", (0, 0, 0))
+        b.step("turned", view_rz=90).add("pin_1x1", (0, 0, 0.25))
+        self.assertIn("Turn the model 90&deg; to the right", booklet(b))
+        # And that is what the drawing does: the corner nearest the camera,
+        # spun 90 degrees, lands further right on the page.
+        near = (1, 1, 0)
+        self.assertGreater(project(mat_apply(rot_z(90), near))[0],
+                           project(near)[0])
 
 
 class TestAccessibility(unittest.TestCase):

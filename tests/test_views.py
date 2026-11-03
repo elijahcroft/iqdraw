@@ -8,7 +8,7 @@ import unittest
 import support  # noqa: F401  (makes the checkout importable)
 
 from iqdraw import Build
-from iqdraw.geom import det, mat_apply
+from iqdraw.geom import det, mat_apply, project
 from iqdraw.views import VIEWS, look, sheet_svg, view_svg
 
 
@@ -33,6 +33,21 @@ class TestLook(unittest.TestCase):
                 # The camera sits on (1, 1, 1); `toward` has to land there.
                 for v in mat_apply(r, toward):
                     self.assertAlmostEqual(v, 3 ** -0.5)
+
+    def _screen(self, name, axis):
+        toward, up, _ = VIEWS[name]
+        return project(mat_apply(look(toward, up), axis))
+
+    def test_the_top_view_reads_like_a_map(self):
+        # +x to the right, +y up the page - as seen from above, not a mirror.
+        x, y = self._screen("top", (1, 0, 0)), self._screen("top", (0, 1, 0))
+        self.assertGreater(x[0], 0.5)
+        self.assertLess(y[1], -0.5)
+
+    def test_side_views_see_what_a_camera_on_that_side_sees(self):
+        # From -y with +z up, +x is on the right; from -x, +y is on the left.
+        self.assertGreater(self._screen("yminus", (1, 0, 0))[0], 0.5)
+        self.assertLess(self._screen("xminus", (0, 1, 0))[0], -0.5)
 
 
 class TestViews(unittest.TestCase):

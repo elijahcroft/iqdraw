@@ -29,7 +29,7 @@ from .render import RenderOpts, _xml_escape, bounds, render, visible, \
 
 # The renderer's own camera frame: screen right, screen up, and toward the
 # camera, as `geom.project` and `geom.depth` define them.
-_RIGHT = vnorm((1.0, -1.0, 0.0))
+_RIGHT = vnorm((-1.0, 1.0, 0.0))
 _UP = vnorm((-1.0, -1.0, 2.0))
 _TOWARD = vnorm((1.0, 1.0, 1.0))
 
@@ -41,15 +41,15 @@ def look(toward, up):
     """
     d = vnorm(toward)
     u = vnorm(tuple(a - b * vdot(up, d) for a, b in zip(up, d)))
-    r = vcross(d, u)
+    r = vcross(u, d)
     return tuple(tuple(_RIGHT[i] * r[j] + _UP[i] * u[j] + _TOWARD[i] * d[j]
                        for j in range(3)) for i in range(3))
 
 
 # name: (camera side, page up, description).  Side views keep +z up the page.
 VIEWS = {
-    "top": ((0, 0, 1), (0, -1, 0), "from above, looking down"),
-    "bottom": ((0, 0, -1), (0, 1, 0), "from below, looking up"),
+    "top": ((0, 0, 1), (0, 1, 0), "from above, looking down"),
+    "bottom": ((0, 0, -1), (0, -1, 0), "from below, looking up"),
     "xminus": ((-1, 0, 0), (0, 0, 1), "from the -x side"),
     "xplus": ((1, 0, 0), (0, 0, 1), "from the +x side"),
     "yminus": ((0, -1, 0), (0, 0, 1), "from the -y side"),

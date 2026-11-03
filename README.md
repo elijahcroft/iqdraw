@@ -182,7 +182,8 @@ The CLI renders the first `Build` it finds at module level.
 - a **parts callout** listing only what this step needs, with counts
 - **insertion arrows**, where you ask for them (see `arrow` below)
 - a **"turn the model 90° to the left"** banner whenever the camera angle
-  changes, so a reader never mistakes a new viewpoint for a changed build
+  changes, so a reader never mistakes a new viewpoint for a changed build.
+  Left and right are the way the side nearest the reader moves
 - a **done checkbox** with a cover progress bar; browsers remember completed
   steps locally when storage is available, and the cover can reset them
 - one frame shared by every step, sized to the finished model, so the build
@@ -765,13 +766,6 @@ than a flag because it should be a considered decision, not a per-render one.
 **One camera angle in the booklet.** Every step is drawn from the same
 isometric viewpoint; `view_rz` spins the model but cannot look from
 underneath. `--views` can, but only of the finished model, for checking.
-
-**The drawings are mirror images.** The projection puts `+x` to the lower
-right and `+y` to the lower left, which is the reflection of what a camera on
-the `(+1,+1,+1)` diagonal would see. Booklets and views agree with each other,
-and the included parts are near enough symmetric that it rarely shows, but a
-handed part is drawn as its mirror twin, and "left" and "right" in a step's
-words can disagree with the picture.
 
 ---
 
