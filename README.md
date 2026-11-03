@@ -639,6 +639,23 @@ step, section, position, axis, box and holes in world coordinates; every joint
 running through it. A drawing shows whether a build looks right; this is what
 is actually joined to what, in numbers a script can test.
 
+Its `drive` section says what turns what. A **body** is the parts that turn as
+one: a shaft and every gear, wheel and collar locked square on it, plus the
+motor whose socket it sits in. A **train** is the bodies joined by meshing
+gears, and each body's `speed` is how many turns it makes for one turn of the
+train's driver (its motor, or else its first-built body), signed about the
++x, +y or +z its shaft runs along. For the gear train:
+
+```bash
+$ iqdraw examples/gear-train.py --inspect | jq -c '.drive.trains[].bodies[].speed'
+1.0
+-0.3333
+0.2
+```
+
+The knob turns the 60-tooth gear a fifth of a turn, the same way round. A ring
+of gears that would have to turn two speeds at once is reported `jammed`.
+
 Mistakes in the spec itself are reported against the line that caused them:
 
 ```

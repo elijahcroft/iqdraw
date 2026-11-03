@@ -19,7 +19,9 @@ iqdraw build.py -o out/build.html         # 4. the booklet, once it is right
   errors, not warnings.
 - `--inspect` prints every part's world box and holes and every joint as JSON.
   `--at X,Y,Z` names what is at one point. A shaft's joints say `locked`
-  (square in square: it drives) or `free` (spins).
+  (square in square: it drives) or `free` (spins). `drive` groups the parts
+  that turn as one, lists the gear meshes, and gives each body's `speed` per
+  turn of the motor or knob; check a gear ratio there, not by eye.
 - `--sheet` is every step plus top, side, front and corner views on one PNG.
   The flat views have hole-number rulers. `--views DIR` writes all seven
   views separately.
