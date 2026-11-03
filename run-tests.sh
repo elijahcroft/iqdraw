@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run the iqdraw test suite. No install and no dependencies - the tests use
-# unittest for the same reason the library uses no third-party packages.
+# Run the iqdraw test suite. The tests use unittest, so they need nothing
+# beyond what the library itself needs (numpy).
 #
 #   ./run-tests.sh            all of it
 #   ./run-tests.sh test_check just one module

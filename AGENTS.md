@@ -26,7 +26,10 @@ iqdraw build.py -o out/build.html         # 4. the booklet, once it is right
   The flat views have hole-number rulers. `--views DIR` writes all seven
   views separately.
 - `--parts` lists the part families; `--part NAME` gives one part's envelope
-  and hole table in its own coordinates.
+  and hole table in its own coordinates. `modelled: false` marks a family
+  the joint checks do not model yet (L-beams, lock beams, connectors, omni
+  wheels, plastic shafts, ...): it is drawn, but nothing is checked against
+  it, so prefer modelled parts where either will do.
 
 Steps 1–3 skip the booklet and take seconds; the booklet can take tens of
 seconds on a robot-sized build.
@@ -119,3 +122,5 @@ part in a scratch build and print `ref.box` and `ref.hole(…).axis`, or run
 
 - Size names parse any number, so `beam_1x9` draws fine. Check sizes against a
   real kit.
+- `Build.turn()` turns the model over between steps; the checks and
+  `--inspect` see every part where it ends up, after the turn.

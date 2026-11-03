@@ -152,9 +152,8 @@ def add_chassis(b, first_section="One side frame", brain=True):
 
     if brain:
         b.section("The brain")
-        with b.step("Sit the brain on the two cross beams, ports facing the "
-                    "back.",
+        with b.step("Sit the brain on the two cross beams, screen up.",
                     caption="It should sit flat. If it rocks, a pin "
                             "underneath is not pushed all the way home.") as s:
-            s.add("brain", (2, 0.5, 0), on=cross, arrow=True)
+            s.add("brain", (2, 0, 0), on=cross, arrow=True)
     return SimpleNamespace(rails=(left(rail), right(rail)), cross=cross)

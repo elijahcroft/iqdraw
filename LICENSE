@@ -20,7 +20,18 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-The included procedural geometry is part of the Software covered by this
-license. VEX and VEX IQ are trademarks of Innovation First, Inc. This project
-is independent and is not affiliated with, endorsed by, or sponsored by VEX
-Robotics or Innovation First.
+--------------------------------------------------------------------------
+
+This licence covers the source code of iqdraw.
+
+It does NOT purport to license the geometry data bundled in `cadmesh.py`,
+which is derived from CAD models published by VEX Robotics, Inc. Those models
+are VEX's, distributed under VEX's own terms, and this project makes no claim
+over them. "VEX" and "VEX IQ" are trademarks of Innovation First, Inc. and
+this project is not affiliated with, endorsed by, or sponsored by either
+company.
+
+Anyone redistributing iqdraw with that data included should satisfy
+themselves that VEX's terms allow it. See the "Licensing and the bundled CAD
+data" section of README.md; `--detail simple` runs the whole tool without
+touching the bundled meshes at all.

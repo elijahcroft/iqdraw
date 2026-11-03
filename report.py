@@ -132,6 +132,33 @@ FAMILIES = {
     "battery": ("battery", "battery", "no hole positions modelled"),
     "band": ("band_N", "band_4", "rubber band stretched over N holes"),
 }
+# Drawn, but not yet in the joint model: no holes are checked, and a pin
+# pushed into one is taken at its word.  See `joints.modelled`.
+_DRAWN_ONLY = "drawn only - the joint checks do not model its holes yet"
+FAMILIES.update({
+    "lbeam": ("lbeam_AxB", "lbeam_2x3", _DRAWN_ONLY),
+    "anglebeam": ("anglebeam_3x3_60 | anglebeam_3x3_45", "anglebeam_3x3_60",
+                  _DRAWN_ONLY),
+    "lockbeam": ("lockbeam_1xN | lockbeam_2x2 | lockbeam_round_2x2",
+                 "lockbeam_1x3", _DRAWN_ONLY),
+    "connector": ("connector_2w_1x2 | connector_2w_2x2 | connector_2w_2x1 | "
+                  "connector_triple_2x2 | connector_chassis_large | ...",
+                  "connector_2w_1x2", _DRAWN_ONLY),
+    "standoffconn": ("standoffconn_mini", "standoffconn_mini", _DRAWN_ONLY),
+    "plastic": ("plastic_shaft_N | plastic_motor_shaft_N", "plastic_shaft_2",
+                _DRAWN_ONLY),
+    "capped": ("capped_shaft_N", "capped_shaft_2", _DRAWN_ONLY),
+    "motorshaft": ("motorshaft_N", "motorshaft_3", _DRAWN_ONLY),
+    "crankarm": ("crankarm_1x4", "crankarm_1x4", _DRAWN_ONLY),
+    "tractionlink": ("tractionlink", "tractionlink", _DRAWN_ONLY),
+    "omni": ("omni_N", "omni_200", _DRAWN_ONLY),
+    "tyre": ("tyre_N", "tyre_200", _DRAWN_ONLY),
+    "hub": ("hub_N", "hub_200", _DRAWN_ONLY),
+    "pulley": ("pulley_20", "pulley_20", _DRAWN_ONLY),
+    "string": ("string_AxB", "string_6x3.5", _DRAWN_ONLY),
+    "touchled": ("touchled", "touchled", _DRAWN_ONLY),
+    "cable": ("cable_N", "cable_200", _DRAWN_ONLY),
+})
 
 
 def part_info(name):
@@ -144,6 +171,7 @@ def part_info(name):
         "family": J.family(name),
         "default_color": _DEFAULT_COLOR.get(J.family(name)),
         "axial": J.is_axial(name),
+        "modelled": J.modelled(name),
         "rod": ({"from": _vec(rod[0]), "to": _vec(rod[1]), "shape": rod[2]}
                 if rod else None),
         "envelope": [_vec(b) for b in J.local_boxes(name)],
@@ -159,6 +187,7 @@ def catalogue():
         info = part_info(example)
         out.append({"family": family, "pattern": pattern, "example": example,
                     "notes": notes, "axial": info["axial"],
+                    "modelled": info["modelled"],
                     "example_envelope": info["envelope"],
                     "example_holes": len(info["holes"])})
     return out

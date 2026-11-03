@@ -180,11 +180,10 @@ with b.step(
 b.section("The controller", "The brain sits low and centred over the deck.")
 
 with b.step(
-        "Place the Robot Brain flat on the deck, screen facing up and ports "
-        "towards the back.",
+        "Place the Robot Brain flat on the deck, screen facing up.",
         caption="Keep it centred so the rover carries the same weight on both "
                 "sides.") as s:
-    s.add("brain", (2, 1.55, 0), on=deck, arrow=True)
+    s.add("brain", (2.5, 1, 0), on=deck, arrow=True)
 
 
 # ------------------------------------------------------------ front bumper

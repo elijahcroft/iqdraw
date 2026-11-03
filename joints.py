@@ -43,6 +43,23 @@ PIN_SPAN = {"pin_1x1": 1.0, "pin_1x2": 1.5, "pin_2x2": 2.0}
 CYLINDERS = ("gear", "wheel", "collar", "spacer", "washer")
 # Parts drawn for recognition only, with no hole positions to check against.
 UNMODELLED = ("brain", "bumper", "distance", "battery")
+# The parts this model knows the holes and solid of.  Anything else - an
+# L-beam, a lock beam, an omni wheel, a plastic shaft - is left to the eye
+# for now: a pin pushed into one counts as a joint, nothing is called solid,
+# colliding or loose against it, and it is not a rod.
+_MODELLED = re.compile(
+    r"^(?:(?:beam|plate|corner)_\d+x\d+|pin_(?:1x1|1x2|2x2)|"
+    r"(?:shaft|standoff|gear|wheel|band)_\d+|collar|spacer|washer|motor)$")
+
+
+def modelled(name):
+    """Does the joint model know this part's holes and shape?"""
+    return bool(_MODELLED.match(name)) or family(name) in UNMODELLED
+
+
+def opaque(name):
+    """A part the joint model knows nothing about: see `_MODELLED`."""
+    return not modelled(name)
 
 
 def family(name):
@@ -120,6 +137,8 @@ def local_boxes(name):
 
 
 def local_holes(name):
+    if opaque(name):
+        return []
     fam = family(name)
     z = (0.0, 0.0, 1.0)
     m = _SIZE.match(name)
@@ -159,6 +178,8 @@ def local_holes(name):
 
 def local_rod(name):
     """(start, end, shape) of a pin's or shaft's centre line, or None."""
+    if opaque(name):
+        return None
     if name in PIN_SPAN:
         h = PIN_SPAN[name] / 2
         return (0.0, 0.0, -h), (0.0, 0.0, h), ROUND
@@ -237,6 +258,10 @@ class Placed:
     def axis(self):
         """Where the part's own +z points - the axis of anything axial."""
         return mat_apply(self.tf.rot, (0.0, 0.0, 1.0))
+
+    @property
+    def opaque(self):
+        return opaque(self.name)
 
     @property
     def label(self):
@@ -320,11 +345,19 @@ def _near(a, b, pad=0.1):
 
 def analyse(build):
     """Every part in the finished build, and every joint between them."""
-    items, k = [], 0
+    from .spec import turned
+
+    # Where each part ends up: moved by every `turn` after its step, and
+    # without the parts drawn for one step only.
+    placed = []
     for n, step in enumerate(build.steps, 1):
-        for placement, name, color, _qty in step.items:
-            items.append(place(k, n, name, color, placement.tf))
-            k += 1
+        if getattr(step, "turn", None) is not None:
+            placed = [(m, name, color, turned(p, step.turn))
+                      for m, name, color, p in placed]
+        placed += [(n, name, color, p) for p, name, color, _qty in step.items
+                   if not getattr(p, "temp", False)]
+    items = [place(k, n, name, color, p.tf)
+             for k, (n, name, color, p) in enumerate(placed)]
     joints = []
     for r in items:
         sockets = r.holes if r.family == "standoff" else []
@@ -336,7 +369,7 @@ def analyse(build):
             if not p.holes:
                 # Electronics: their holes are not modelled, so a pin pushed
                 # into one is taken at its word rather than called solid.
-                hit = (r.rod and p.family in UNMODELLED and next(
+                hit = (r.rod and (p.family in UNMODELLED or p.opaque) and next(
                     (q for q in rod_points(r.rod) if inside(q, p)), None))
                 if hit:
                     joints.append(Joint(r.index, p.index, -1, r.family,

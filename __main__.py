@@ -96,10 +96,9 @@ def main(argv=None):
                     help="skip the finished-model image on the cover")
     ap.add_argument("--detail", choices=parts.DETAIL_LEVELS,
                     default=parts.DEFAULT_DETAIL,
-                    help="geometry detail: 'cad' is the default and prefers "
-                         "optional local meshes with automatic procedural "
-                         "fallback; 'simple' always uses the smaller included "
-                         "procedural models")
+                    help="geometry detail: 'cad' uses the bundled official VEX "
+                         "meshes (default), 'simple' the procedural shapes, for "
+                         "a file about a quarter the size")
     ap.add_argument("--context-detail", choices=parts.DETAIL_LEVELS,
                     help="geometry detail for the parts already built, drawn "
                          "washed out behind the step's own. 'simple' is about "

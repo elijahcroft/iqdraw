@@ -108,9 +108,10 @@ def _world_box(placement):
     """
     Transform the local box's eight corners and re-fit around them.
 
-    For the axis-aligned quarter-turns real builds use this is exact; for an
-    arbitrary angle it over-estimates, which is the safe direction - it can
-    only ever make a check quieter, never make it invent a problem.
+    For the axis-aligned quarter-turns most builds use this is exact; for an
+    arbitrary angle it over-estimates.  That keeps the stranded rule quiet,
+    but it would make the overlap rule invent problems, so that rule leaves
+    turned parts alone - see `_square`.
     """
     x0, y0, z0, x1, y1, z1 = _local_box(placement.part)
     corners = [(x, y, z) for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
@@ -121,11 +122,16 @@ def _world_box(placement):
 
 
 def _items(build):
-    out = []
+    """Every part, where it ends up - after any `turn` of the model."""
+    from .spec import turned
+
+    placed = []
     for i, step in enumerate(build.steps):
-        for placement, name, _color, _qty in step.items:
-            out.append(_Item(i + 1, name, placement, _world_box(placement)))
-    return out
+        if getattr(step, "turn", None) is not None:
+            placed = [(n, name, turned(p, step.turn))
+                      for n, name, p in placed]
+        placed += [(i + 1, name, p) for p, name, _color, _qty in step.items]
+    return [_Item(n, name, p, _world_box(p)) for n, name, p in placed]
 
 
 def _overlap(a, b):
@@ -166,6 +172,12 @@ def _check_duplicates(items):
             seen[key] = it
 
 
+def _square(placement):
+    """Is the part turned only by quarter turns, so its box is exact?"""
+    return all(min(abs(v), abs(abs(v) - 1.0)) < 1e-6
+               for row in placement.tf.rot for v in row)
+
+
 def _check_structural_overlap(items):
     """
     Two beams or plates in the same space.
@@ -174,8 +186,16 @@ def _check_structural_overlap(items):
     shafts through gears and collars on shafts are all meant to interpenetrate,
     so a general collision test would report the whole model.  Two beams never
     are.
+
+    And restricted to parts turned by quarter turns.  A beam at 35 degrees has
+    a bounding box far bigger than the beam, so two that only touch end to end
+    - a claw finger's links - would be reported as one inside the other.
     """
-    flat = [it for it in items if _family(it.name) in STRUCTURAL]
+    # Only parts on quarter turns: a beam at 45 degrees fills a fraction of
+    # its bounding box, so two parallel diagonal beams well apart - the two
+    # arms of a four-bar linkage - would read as one inside the other.
+    flat = [it for it in items
+            if _family(it.name) in STRUCTURAL and _square(it.placement)]
     for i, a in enumerate(flat):
         for b in flat[i + 1:]:
             # An exact duplicate overlaps itself perfectly; the duplicate rule
@@ -342,7 +362,7 @@ def _check_rods(model, collided):
         held = {j.part for j in model.joints if j.rod == r.index}
         for p in model.parts:
             if (p is r or p.rod or p.index in held or p.family == "band"
-                    or min(J.overlap(r.box, p.box)) <= 0):
+                    or p.opaque or min(J.overlap(r.box, p.box)) <= 0):
                 continue
             if not any(J.inside(q, p) for q in pts):
                 continue
@@ -370,9 +390,13 @@ def _check_loose(model, collided):
     """
     if len(model.parts) < 2:
         return
+    opaque = [u for u in model.parts if u.opaque]
     for p in model.parts:
         if p.index in collided:
             continue          # already reported, more usefully
+        if any(u is not p and min(J.overlap(p.box, u.box)) > -0.1
+               for u in opaque):
+            continue          # held, perhaps, by a part not modelled here
         joined = model.joined(p.index)
         if p.family == "pin" and len(joined) < 2:
             what = (f"only goes into {model.parts[joined[0]].label}"
@@ -422,7 +446,8 @@ def _check_collisions(model, _collided):
     rule's; pins and shafts are meant to pass through things and have their
     own rule above.
     """
-    solid = [p for p in model.parts if not p.rod and p.family != "band"]
+    solid = [p for p in model.parts
+             if not p.rod and p.family != "band" and not p.opaque]
     for i, a in enumerate(solid):
         for b in solid[i + 1:]:
             if min(J.overlap(a.box, b.box)) <= 0:

@@ -1,5 +1,5 @@
-# The renderer stays standard-library-only. CustomTkinter is the one packaged
-# dependency and belongs exclusively to the optional desktop entry point.
+# The renderer needs numpy for its depth-buffer rasteriser (raster.py).
+# CustomTkinter belongs exclusively to the optional desktop entry point.
 #
 # The package directory is also the project root, which is why `package-dir`
 # maps `iqdraw` to ".". This preserves the original import layout while making
@@ -25,7 +25,7 @@ classifiers = [
     "Topic :: Education",
     "Topic :: Multimedia :: Graphics :: 3D Rendering",
 ]
-dependencies = ["customtkinter>=5.2.2,<6"]
+dependencies = ["customtkinter>=5.2.2,<6", "numpy"]
 
 [project.urls]
 Homepage = "https://github.com/elijahcroft/iqdraw"
