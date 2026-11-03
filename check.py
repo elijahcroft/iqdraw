@@ -344,7 +344,8 @@ CYL_TOL = 0.06
 COAX_TOL = 0.04
 # Parts a finished build has to hold on with a pin, shaft or standoff.  Leaves
 # out the electronics, whose holes are not modelled, and rubber bands.
-FASTENED = ("beam", "plate", "corner", "standoff") + J.CYLINDERS
+FASTENED = ("beam", "plate", "corner", "standoff", "lbeam", "anglebeam",
+            "lockbeam", "crankarm") + J.CYLINDERS
 
 
 def _check_rods(model, collided):
@@ -404,7 +405,7 @@ def _check_loose(model, collided):
             yield Problem(p.step, "loose",
                           f"{p.label} {what} - a pin has to reach into two "
                           f"parts to hold them together")
-        elif p.family == "shaft" and not joined:
+        elif p.rod and p.rod[2] == J.SQUARE and not joined:
             yield Problem(p.step, "loose",
                           f"{p.label} does not pass through any hole")
         elif p.family in FASTENED and not joined:
