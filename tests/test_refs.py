@@ -98,6 +98,34 @@ class TestPlacing(unittest.TestCase):
             s.add("spacer", (0, 0, 0), on="beam")
 
 
+class TestOrientationTable(unittest.TestCase):
+    """The rotations AGENTS.md lists, each doing what it says."""
+
+    def _axis(self, ref, *hole):
+        return tuple(abs(v) for v in ref.hole(*hole).axis)
+
+    def test_every_row(self):
+        s = Build("o").step("s")
+        X, Y, Z = (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)
+        flat = s.add("beam_1x6", (0, 0, 0), rot=(0, 0, 90))
+        self.assertEqual((flat.hole(5), self._axis(flat, 5)), ((0, 5, 0), Z))
+        rail = s.add("beam_2x12", (0, 0, 0), rot=(90, 0, 0))
+        self.assertEqual((rail.hole(3, 1), self._axis(rail, 3)),
+                         ((3, 0, 1), Y))
+        arm = s.add("beam_1x6", (0, 0, 0), rot=(90, 0, 180))
+        self.assertEqual((arm.hole(5), self._axis(arm, 5)), ((-5, 0, 0), Y))
+        bar = s.add("beam_1x8", (0, 0, 0), rot=(90, 0, 90))
+        self.assertEqual((bar.hole(7), self._axis(bar, 7)), ((0, 7, 0), X))
+        tower = s.add("beam_1x6", (0, 0, 0), rot=(0, -90, 90))
+        self.assertEqual((tower.hole(5), self._axis(tower, 5)),
+                         ((0, 0, 5), Y))
+        for rz, foot in ((-90, -1.0), (90, 1.0)):
+            hung = s.add("corner_2x2", (0, 0, 0), rot=(180, 0, rz))
+            self.assertEqual(hung.hole(1), (0, foot, 0))       # foot on top
+            self.assertEqual(hung.hole(0, 0, 2), (0, 0, -2))   # upright below
+            self.assertEqual(self._axis(hung, 0, 0, 2), Y)
+
+
 class TestMeshing(unittest.TestCase):
     def test_spacing_is_teeth_over_24_per_gear(self):
         s = Build("m").step("s")

@@ -70,6 +70,8 @@ iqdraw --new examples/my-build.py
 iqdraw examples/my-build.py
 ```
 
+Writing builds with an AI agent, or want the short version? [AGENTS.md](AGENTS.md) is the loop, the orientations and the checks on one page.
+
 The starter file is intentionally short. Edit its steps, refresh the generated
 HTML, and use the [coordinate model](#the-coordinate-model) when adding parts.
 The complete [pinned frame](examples/pinned-frame.py),
@@ -94,6 +96,7 @@ and a deliberate final camera change across seven named sections.
 | `--no-check` | skip the checks |
 | `--sheet FILE` | every step and four views of the finished model on one captioned page, `.png` or `.svg` |
 | `--views DIR` | the finished model from the top, bottom, each side and the corner, with hole-number rulers |
+| `--parts`, `--part NAME` | every part family, or one part's envelope and holes in its own coordinates, as JSON — no spec needed |
 | `--inspect` | print the finished build as JSON — parts, holes, joints, problems — drawing nothing. `--at X,Y,Z` narrows it to one point |
 
 You can also run `python3 -m iqdraw` anywhere you would use the `iqdraw`

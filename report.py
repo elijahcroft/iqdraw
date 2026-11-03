@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from . import joints as J
 from .check import check
+from .parts import _DEFAULT_COLOR, get
 
 
 def _r(v):
@@ -84,4 +85,74 @@ def report(build, at=None):
                       for p in model.parts for h in p.holes
                       if _through(h, pt)],
         }
+    return out
+
+
+# --------------------------------------------------------------- catalogue
+
+# family: (name pattern, example, how it is placed).  Sizes come from the
+# name, so any number parses - check the size against a real kit.
+FAMILIES = {
+    "beam": ("beam_WxL", "beam_2x12",
+             "W holes across (+y), L along (+x), lying flat with its holes "
+             "along z; first hole at `at`. rot=(90, 0, 0) stands it on edge"),
+    "plate": ("plate_WxL", "plate_4x8", "a thinner beam: 0.25 thick"),
+    "corner": ("corner_AxB", "corner_2x4",
+               "L bracket: A holes along +x (holes along z), B holes up +z "
+               "(holes along x)"),
+    "pin": ("pin_1x1 | pin_1x2 | pin_2x2", "pin_1x1",
+            "centred on `at`, along its axis; joins the two parts it "
+            "reaches into"),
+    "shaft": ("shaft_N", "shaft_4",
+              "square, runs from 0.5 behind `at` to N-0.5 ahead along its "
+              "axis; spins in round holes, locks in square bores"),
+    "standoff": ("standoff_N", "standoff_2",
+                 "runs 0..N from `at` along its axis; a pin socket in each "
+                 "end"),
+    "gear": ("gear_N", "gear_36",
+             "N teeth, square bore at `at`; pitch radius N/24, so two "
+             "gears mesh (Na+Nb)/24 holes apart"),
+    "wheel": ("wheel_N", "wheel_200",
+              "N = travel per revolution in mm (100, 160, 200, 250); "
+              "square bore at `at`"),
+    "collar": ("collar", "collar", "locks to a shaft: square bore"),
+    "spacer": ("spacer", "spacer", "0.25 thick, round bore"),
+    "washer": ("washer", "washer", "0.12 thick, round bore"),
+    "motor": ("motor", "motor",
+              "mounting holes along z, square drive socket on +x"),
+    "brain": ("brain", "brain", "no hole positions modelled"),
+    "bumper": ("bumper", "bumper", "no hole positions modelled"),
+    "distance": ("distance", "distance", "no hole positions modelled"),
+    "battery": ("battery", "battery", "no hole positions modelled"),
+    "band": ("band_N", "band_4", "rubber band stretched over N holes"),
+}
+
+
+def part_info(name):
+    """One part, in its own coordinates: what `iqdraw --part NAME` prints."""
+    part = get(name)
+    rod = J.local_rod(name)
+    return {
+        "name": name,
+        "label": part.label,
+        "family": J.family(name),
+        "default_color": _DEFAULT_COLOR.get(J.family(name)),
+        "axial": J.is_axial(name),
+        "rod": ({"from": _vec(rod[0]), "to": _vec(rod[1]), "shape": rod[2]}
+                if rod else None),
+        "envelope": [_vec(b) for b in J.local_boxes(name)],
+        "holes": [_hole(h) for h in J.local_holes(name)],
+    }
+
+
+def catalogue():
+    """Every part family: what `iqdraw --parts` prints."""
+    out = []
+    for family in sorted(_DEFAULT_COLOR):
+        pattern, example, notes = FAMILIES[family]
+        info = part_info(example)
+        out.append({"family": family, "pattern": pattern, "example": example,
+                    "notes": notes, "axial": info["axial"],
+                    "example_envelope": info["envelope"],
+                    "example_holes": len(info["holes"])})
     return out

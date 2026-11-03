@@ -187,6 +187,27 @@ class TestInspect(_Temp):
                       run(spec, "--inspect", "--at", "0,0").stderr)
 
 
+class TestCatalogue(unittest.TestCase):
+    def test_parts_lists_every_family(self):
+        r = run("--parts")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        families = {f["family"] for f in json.loads(r.stdout)}
+        self.assertIn("beam", families)
+        self.assertIn("corner", families)
+
+    def test_part_gives_one_parts_holes(self):
+        data = json.loads(run("--part", "beam_1x4").stdout)
+        self.assertEqual([h["at"] for h in data["holes"]],
+                         [[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]])
+        self.assertEqual(data["envelope"], [[-0.5, -0.5, -0.25,
+                                             3.5, 0.5, 0.25]])
+
+    def test_an_unknown_part_fails_with_a_hint(self):
+        r = run("--part", "beem_1x8")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("did you mean", r.stderr)
+
+
 class TestViews(_Temp):
     def test_views_are_written_without_a_booklet(self):
         spec = self.spec(GOOD)

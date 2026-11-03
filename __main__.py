@@ -125,6 +125,11 @@ def main(argv=None):
     ap.add_argument("--at", metavar="X,Y,Z",
                     help="with --inspect: also report the parts and holes "
                          "at this point")
+    ap.add_argument("--parts", action="store_true",
+                    help="print every part family as JSON and exit")
+    ap.add_argument("--part", metavar="NAME",
+                    help="print one part's envelope, holes and axis as JSON, "
+                         "in its own coordinates, and exit")
     ap.add_argument("--gui", action="store_true",
                     help="open the desktop interface")
     args = ap.parse_args(argv)
@@ -146,6 +151,16 @@ def main(argv=None):
         except FileExistsError:
             raise SystemExit(f"{args.new}: already exists; nothing changed")
         print(f"Created {args.new}\nNext: iqdraw {args.new}")
+        return
+    if args.parts or args.part:
+        from .report import catalogue, part_info
+        parts.set_detail("simple")
+        try:
+            data = catalogue() if args.parts else part_info(args.part)
+        except parts.UnknownPart as e:
+            raise SystemExit(str(e)) from None
+        json.dump(data, sys.stdout, indent=1)
+        print()
         return
     if args.spec is None:
         ap.error("a build spec is required (or use --new FILE)")
