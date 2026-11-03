@@ -6,9 +6,12 @@ import unittest
 
 import support  # noqa: F401 - adds the checkout's parent to sys.path
 
+from iqdraw import parts
+
 from iqdraw.gui import (
-    RenderSettings, create_starter, inspect_build, inspection_command,
-    render_command,
+    CONTEXT_OPTIONS, DETAIL_OPTIONS, IQDrawApp, RenderSettings, _option_label,
+    _option_value, create_starter, inspect_build, inspection_command,
+    render_command, source_is_current,
 )
 from iqdraw.gui_state import (
     StudioState, bundled_examples, config_path, load_state, save_state,
@@ -16,6 +19,12 @@ from iqdraw.gui_state import (
 
 
 class TestRenderCommand(unittest.TestCase):
+    def test_studio_labels_do_not_leak_into_cli_values(self):
+        self.assertEqual(_option_label("cad", DETAIL_OPTIONS),
+                         "CAD models (recommended)")
+        self.assertEqual(_option_value("Match new parts", CONTEXT_OPTIONS),
+                         "same")
+
     def test_it_translates_all_form_options(self):
         settings = RenderSettings(
             pathlib.Path("build.py"), pathlib.Path("guide.html"),
@@ -42,11 +51,26 @@ class TestRenderCommand(unittest.TestCase):
             pathlib.Path("b.py"), pathlib.Path("b.html"),
         ))
         self.assertEqual(command[1:], ["-m", "iqdraw", "b.py", "-o", "b.html",
-                                       "--detail", "simple"])
+                                       "--detail", parts.DEFAULT_DETAIL])
 
     def test_inspection_is_a_separate_helper_process(self):
         command = inspection_command(pathlib.Path("b.py"))
         self.assertEqual(command[1:], ["-m", "iqdraw.gui_inspect", "b.py"])
+
+    def test_a_render_can_detect_that_its_source_changed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = pathlib.Path(folder) / "build.py"
+            path.write_text("first")
+            settings = RenderSettings(
+                path, path.with_suffix(".html"),
+                source_mtime_ns=path.stat().st_mtime_ns,
+            )
+            self.assertTrue(source_is_current(settings))
+            previous = path.stat().st_mtime_ns
+            path.write_text("second version")
+            if path.stat().st_mtime_ns == previous:
+                path.touch()
+            self.assertFalse(source_is_current(settings))
 
 
 class TestStarterAndSummary(unittest.TestCase):
@@ -97,6 +121,36 @@ class TestStudioState(unittest.TestCase):
         self.assertFalse(loaded.hero)
         self.assertTrue(loaded.export_svg)
         self.assertEqual(loaded.recent_files, state.recent_files)
+
+    def test_cad_is_the_new_studio_default(self):
+        self.assertEqual(StudioState().detail, "cad")
+
+    def test_legacy_implicit_simple_default_migrates_to_cad(self):
+        path = self.root / "studio.json"
+        path.write_text('{"detail": "simple"}')
+        self.assertEqual(load_state(path).detail, "cad")
+
+    def test_current_explicit_simple_preference_is_preserved(self):
+        path = self.root / "studio.json"
+        save_state(path, StudioState(detail="simple"))
+        self.assertEqual(load_state(path).detail, "simple")
+
+    def test_prior_notice_does_not_trust_an_unseen_python_file(self):
+        path = self.root / "unseen.py"
+        path.write_text("print('not loaded by this test')")
+
+        class MessageBox:
+            calls = 0
+
+            def askokcancel(inner_self, *_args, **_kwargs):
+                inner_self.calls += 1
+                return False
+
+        app = IQDrawApp.__new__(IQDrawApp)
+        app.state = StudioState(trust_notice_seen=True)
+        app.messagebox = MessageBox()
+        self.assertFalse(app._confirm_trusted(path))
+        self.assertEqual(app.messagebox.calls, 1)
 
     def test_corrupt_preferences_fall_back_to_defaults(self):
         path = self.root / "studio.json"

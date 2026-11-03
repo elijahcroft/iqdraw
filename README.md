@@ -7,7 +7,12 @@
 Create printable, step-by-step VEX IQ (2nd generation) build instructions from
 a small, readable Python specification.
 
-**[Read a finished booklet, and four worked builds &rarr;](https://elijahcroft.github.io/iqdraw/)**
+**[Explore five finished builds and their printable booklets &rarr;](https://elijahcroft.github.io/iqdraw/)**
+
+[![A finished six-wheel survey rover rendered by IQDraw, with a grey deck, yellow sensor mast, and red bumper](docs/assets/survey-rover.png)](https://elijahcroft.github.io/iqdraw/#examples)
+
+*The 55-part [survey rover](examples/survey-rover.py), rendered directly from
+its build specification with IQDraw's redistributable procedural geometry.*
 
 You describe a build as a list of parts at hole coordinates. It renders
 isometric step-by-step diagrams and wraps them in a printable booklet with a
@@ -33,8 +38,9 @@ You can also use `iqdraw --gui`, or open a build immediately with
 `iqdraw-gui examples/gear-train.py`. The desktop app includes bundled examples,
 recent projects, step and inventory review, validation results, remembered
 drawing options, source auto-reload, keyboard shortcuts, and HTML/SVG/PNG
-output. Rendering stays responsive in the background and uses the same tested
-path as the CLI.
+output. CAD models are selected by default, with an automatic precision-model
+fallback for any part that has no local CAD mesh. Rendering stays responsive
+in the background and uses the same tested path as the CLI.
 
 It uses CustomTkinter for a modern, system-aware desktop interface. The normal
 IQDraw installation includes it automatically; some minimal Linux systems may
@@ -68,7 +74,10 @@ The starter file is intentionally short. Edit its steps, refresh the generated
 HTML, and use the [coordinate model](#the-coordinate-model) when adding parts.
 The complete [pinned frame](examples/pinned-frame.py),
 [gear train](examples/gear-train.py), [drive base](examples/drive-base.py), and
-[grabber arm](examples/grabber-arm.py) show progressively larger builds.
+[grabber arm](examples/grabber-arm.py) show progressively larger builds. The
+[six-wheel survey rover](examples/survey-rover.py) is the flagship example:
+20 steps, 55 parts, mirrored wheel modules, coloured structure, electronics,
+and a deliberate final camera change across seven named sections.
 
 | option | what it does |
 |---|---|
@@ -77,8 +86,8 @@ The complete [pinned frame](examples/pinned-frame.py),
 | `--png` | also rasterise each step (needs `rsvg-convert`) |
 | `--no-hero` | drop the finished-model image from the cover |
 | `--new FILE` | create a starter build without overwriting an existing file |
-| `--detail simple` | use the included, independently drawn procedural geometry (default) |
-| `--detail cad` | use optional local high-detail meshes when legally available |
+| `--detail cad` | prefer local high-detail CAD meshes when available, with automatic procedural fallback (default) |
+| `--detail simple` | always use the included, independently drawn procedural geometry for smaller files |
 | `--context-detail simple` | plainer geometry for the parts *already built*; the step's own parts keep full detail |
 | `--check-only` | run the checks and report, drawing nothing |
 | `--strict` | treat anything the checks find as an error |
@@ -161,6 +170,8 @@ The CLI renders the first `Build` it finds at module level.
 - **insertion arrows**, where you ask for them (see `arrow` below)
 - a **"turn the model 90° to the left"** banner whenever the camera angle
   changes, so a reader never mistakes a new viewpoint for a changed build
+- a **done checkbox** with a cover progress bar; browsers remember completed
+  steps locally when storage is available, and the cover can reset them
 - one frame shared by every step, sized to the finished model, so the build
   stays registered in place from page to page instead of jumping around
 

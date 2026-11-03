@@ -93,10 +93,12 @@ def main(argv=None):
                     help="also rasterise each step to .png (needs rsvg-convert)")
     ap.add_argument("--no-hero", action="store_true",
                     help="skip the finished-model image on the cover")
-    ap.add_argument("--detail", choices=parts.DETAIL_LEVELS, default="simple",
-                    help="geometry detail: 'simple' uses the included "
-                         "procedural shapes (default); 'cad' uses optional "
-                         "local meshes when available")
+    ap.add_argument("--detail", choices=parts.DETAIL_LEVELS,
+                    default=parts.DEFAULT_DETAIL,
+                    help="geometry detail: 'cad' is the default and prefers "
+                         "optional local meshes with automatic procedural "
+                         "fallback; 'simple' always uses the smaller included "
+                         "procedural models")
     ap.add_argument("--context-detail", choices=parts.DETAIL_LEVELS,
                     help="geometry detail for the parts already built, drawn "
                          "washed out behind the step's own. 'simple' is about "
@@ -132,11 +134,16 @@ def main(argv=None):
         return
     if args.spec is None:
         ap.error("a build spec is required (or use --new FILE)")
+    if args.no_check and args.strict:
+        ap.error("--strict cannot be used with --no-check")
+    if args.no_check and args.check_only:
+        ap.error("--check-only cannot be used with --no-check")
 
     parts.set_detail(args.detail)
     build = load_build(args.spec)
     if args.context_detail:
         build.context_detail = args.context_detail
+
 
     if not args.no_check:
         problems = check(build)
@@ -158,22 +165,42 @@ def main(argv=None):
     if args.svg_dir or args.png:
         d = args.svg_dir or out.parent / f"{out.stem}-steps"
         d.mkdir(parents=True, exist_ok=True)
+        rasterizer = shutil.which("rsvg-convert") if args.png else None
+        if args.png and not rasterizer:
+            print("rsvg-convert not found; SVG files will be created but PNG "
+                  "files will be skipped", file=sys.stderr)
+        generated_svgs = set()
+        generated_pngs = set()
         for number, _step, svg in build.step_svgs():
             f = d / f"step-{number:02d}.svg"
             f.write_text(svg, encoding="utf-8")
-            if args.png:
-                _rasterise(f)
-        print(f"{d}/  ({len(build.steps)} files)")
+            generated_svgs.add(f.name)
+            if rasterizer:
+                png = _rasterise(f, rasterizer)
+                generated_pngs.add(png.name)
+        _remove_stale_step_files(d, ".svg", generated_svgs)
+        if args.png:
+            # Old raster files are worse than no raster files: they can show a
+            # step that no longer exists or an earlier version of the build.
+            _remove_stale_step_files(d, ".png", generated_pngs)
+        file_count = len(generated_svgs) + len(generated_pngs)
+        print(f"{d}/  ({file_count} files)")
 
 
-def _rasterise(svg_path: pathlib.Path):
-    tool = shutil.which("rsvg-convert")
-    if not tool:
-        print("rsvg-convert not found; skipping PNG", file=sys.stderr)
-        return
+def _rasterise(svg_path: pathlib.Path, tool: str) -> pathlib.Path:
     png = svg_path.with_suffix(".png")
     subprocess.run([tool, "-b", "white", "-o", str(png), str(svg_path)],
                    check=True)
+    return png
+
+
+def _remove_stale_step_files(directory: pathlib.Path, suffix: str,
+                             keep: set[str]) -> None:
+    """Remove only IQDraw-numbered files left by an earlier, longer build."""
+    for path in directory.glob(f"step-*{suffix}"):
+        number = path.stem.removeprefix("step-")
+        if number.isdigit() and path.name not in keep:
+            path.unlink()
 
 
 if __name__ == "__main__":

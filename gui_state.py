@@ -9,16 +9,20 @@ import sys
 from dataclasses import asdict, dataclass, field
 from typing import Mapping, Optional
 
+from . import parts
+
 
 MAX_RECENT = 8
+STATE_VERSION = 2
 
 
 @dataclass
 class StudioState:
     """Preferences worth carrying between GUI sessions."""
 
+    schema_version: int = STATE_VERSION
     recent_files: list[str] = field(default_factory=list)
-    detail: str = "simple"
+    detail: str = parts.DEFAULT_DETAIL
     context_detail: str = "same"
     hero: bool = True
     checks: bool = True
@@ -71,8 +75,15 @@ def load_state(path: pathlib.Path) -> StudioState:
     if isinstance(recent, list):
         state.recent_files = [item for item in recent
                               if isinstance(item, str)][:MAX_RECENT]
-    if raw.get("detail") in ("simple", "cad"):
+    # Version 1 always wrote `simple`, even when the user had never chosen a
+    # preference. Treat that legacy value as the old product default so the
+    # CAD-first update reaches existing Studio installs. Once version 2 has
+    # been saved, an explicit switch back to procedural detail is preserved.
+    if (raw.get("schema_version") == STATE_VERSION
+            and raw.get("detail") in ("simple", "cad")):
         state.detail = raw["detail"]
+    elif raw.get("detail") == "cad":
+        state.detail = "cad"
     if raw.get("context_detail") in ("same", "simple", "cad"):
         state.context_detail = raw["context_detail"]
     for name in ("hero", "checks", "strict", "export_svg", "export_png",

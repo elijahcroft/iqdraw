@@ -576,10 +576,23 @@ def attach(prims, decals, up=1):
     caps = [f for f in caps if abs(f.pts[0][2] * up - zmax) < 1e-9]
 
     for d in decals:
-        c = d.center if isinstance(d, Disc) else centroid(d.pts)
-        host = next((f for f in caps if _contains_xy(f.pts, c[0], c[1])),
-                    outermost)
-        host.decals = list(host.decals) + [d]
+        # A decal straddling several cells rides on every one of them.  On
+        # one alone, the others paint over the part of it they cover - and
+        # which of them is nearest the camera depends on how the part is
+        # turned when it is placed, which is not known here.  Whichever copy
+        # is drawn last is drawn whole.
+        if isinstance(d, Disc):
+            c = d.center
+            probe = [c] + [
+                vadd(c, vadd(vmul(d.u, d.r * math.cos(k * math.pi / 4)),
+                             vmul(d.v, d.r * math.sin(k * math.pi / 4))))
+                for k in range(8)]
+        else:
+            probe = [centroid(d.pts)] + list(d.pts)
+        under = [f for f in caps
+                 if any(_contains_xy(f.pts, p[0], p[1]) for p in probe)]
+        for host in under or [outermost]:
+            host.decals = list(host.decals) + [d]
     return prims
 
 

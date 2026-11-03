@@ -77,6 +77,35 @@ class TestRendering(_Temp):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(sorted(p.name for p in steps.glob("*.svg")),
                          ["step-01.svg", "step-02.svg"])
+        self.assertIn("(2 files)", r.stdout)
+
+    def test_png_output_reports_and_keeps_only_current_files(self):
+        out = self.tmp / "out.html"
+        steps = self.tmp / "steps"
+        steps.mkdir()
+        (steps / "step-03.png").write_bytes(b"stale")
+        r = run(self.spec(GOOD), "-o", out, "--svg-dir", steps,
+                "--detail", "simple", "--png")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        if "rsvg-convert not found" in r.stderr:
+            self.assertEqual(list(steps.glob("*.png")), [])
+            self.assertIn("(2 files)", r.stdout)
+            return
+        self.assertEqual(sorted(p.name for p in steps.glob("*.png")),
+                         ["step-01.png", "step-02.png"])
+        self.assertIn("(4 files)", r.stdout)
+
+    def test_a_shorter_rerender_removes_only_stale_step_files(self):
+        out = self.tmp / "out.html"
+        steps = self.tmp / "steps"
+        steps.mkdir()
+        (steps / "step-03.svg").write_text("stale")
+        (steps / "notes.svg").write_text("keep me")
+        r = run(self.spec(GOOD), "-o", out, "--svg-dir", steps,
+                "--detail", "simple")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((steps / "step-03.svg").exists())
+        self.assertEqual((steps / "notes.svg").read_text(), "keep me")
 
     def test_simple_detail_is_much_smaller_than_cad(self):
         if not support.parts.HAS_CAD_MESHES:
@@ -134,6 +163,14 @@ class TestChecks(_Temp):
 
 
 class TestErrors(_Temp):
+    def test_check_modes_cannot_contradict_each_other(self):
+        spec = self.spec(GOOD)
+        for option in ("--strict", "--check-only"):
+            with self.subTest(option=option):
+                r = run(spec, "--no-check", option)
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn("cannot be used with --no-check", r.stderr)
+
     def test_an_unknown_part_names_the_line(self):
         spec = self.spec('b = Build("x")\n'
                          'with b.step("s") as s:\n'

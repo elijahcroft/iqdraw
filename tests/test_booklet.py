@@ -107,6 +107,12 @@ class TestStructure(unittest.TestCase):
         for n in (1, 2, 3):
             self.assertIn(f'id="step-{n}"', self.html)
 
+    def test_the_cover_tracks_and_can_reset_progress(self):
+        self.assertIn('id="build-progress"', self.html)
+        self.assertIn('id="progress-label"', self.html)
+        self.assertIn('id="reset-progress"', self.html)
+        self.assertIn("localStorage.setItem", self.html)
+
 
 class TestOrientation(unittest.TestCase):
     def setUp(self):
@@ -168,6 +174,10 @@ class TestAccessibility(unittest.TestCase):
     def test_the_checkbox_has_a_label(self):
         self.assertIn("Mark step 1 done", self.html)
 
+    def test_the_progress_bar_has_a_label(self):
+        progress = [attrs for tag, attrs in self.doc.tags if tag == "progress"]
+        self.assertEqual(progress[0].get("aria-labelledby"), "progress-label")
+
     def test_it_offers_a_dark_theme_and_a_print_theme(self):
         self.assertIn("prefers-color-scheme:dark", self.html)
         self.assertIn("@media print", self.html)
@@ -204,7 +214,7 @@ class TestExamples(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        parts.set_detail("cad")
+        parts.set_detail(parts.DEFAULT_DETAIL)
 
     def test_every_shipped_example_renders_and_parses(self):
         for name in support.example_names():

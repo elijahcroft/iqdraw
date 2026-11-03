@@ -173,11 +173,24 @@ class TestSections(unittest.TestCase):
         self.assertIn("<h2>Chassis</h2>", html)
         self.assertIn("<h2>Arm</h2>", html)
         self.assertIn("Part 1 of 2", html)
+        self.assertIn('href="#section-1">Chassis</a>', html)
+        self.assertIn('id="section-2"', html)
         self.assertIn("bolts to the front", html)
         # Each section says how long it is, so its end is visible from its
         # start - the same job the cover's step count does for the build.
         self.assertIn(">2 steps<", html)
         self.assertIn(">1 step<", html)
+
+    def test_an_unsectioned_prelude_does_not_offset_part_numbers(self):
+        b = Build("x")
+        with b.step("start") as s:
+            s.add("beam_1x8", (0, 0, 0))
+        b.section("Only named section")
+        with b.step("finish") as s:
+            s.add("pin_1x1", (0, 0, 0.25), axis="z")
+        html = booklet(b, hero=False)
+        self.assertIn("Part 1 of 1", html)
+        self.assertNotIn("Part 2 of 1", html)
 
     def test_step_numbering_stays_continuous_across_sections(self):
         html = booklet(self._sectioned(), hero=False)
@@ -305,7 +318,7 @@ class TestCoverContents(unittest.TestCase):
     def test_the_cover_lists_the_sections_and_their_steps(self):
         html = booklet(self._sectioned(), hero=False)
         self.assertIn("What you will build", html)
-        self.assertIn(">Chassis</span>", html)
+        self.assertIn('href="#section-1">Chassis</a>', html)
         self.assertIn("steps 1&ndash;2", html)
         self.assertIn(">step 3<", html)
 

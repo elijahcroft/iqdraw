@@ -56,6 +56,21 @@ a{color:#0b5fa5}
 .shape p+p{margin-top:6px}
 .shape b{color:var(--ink)}
 
+/* Live progress for screen use. It is deliberately compact and lives on the
+   cover, where a returning builder can orient themselves before finding the
+   next step. The booklet still works when scripts or storage are unavailable. */
+.build-progress{margin:14px 0 0;padding:13px 16px;background:var(--chip);
+  border:1px solid var(--line);border-radius:8px;max-width:60ch}
+.progress-head{display:flex;align-items:center;justify-content:space-between;
+  gap:16px;margin-bottom:8px}
+.progress-head p{margin:0;color:var(--ink-2)}
+.progress-head button{min-height:32px;padding:4px 12px;border-radius:7px;
+  border:1px solid var(--line);background:var(--card);color:var(--ink);
+  font:600 13px/1.4 inherit;cursor:pointer}
+.progress-head button:hover{background:var(--page)}
+.build-progress progress{display:block;width:100%;height:10px;
+  accent-color:#0b5fa5}
+
 .inv{margin-top:26px;border-top:2px solid #e3e6ea;padding-top:20px}
 .inv h2{margin:0 0 14px;font-size:15px;text-transform:uppercase;
   letter-spacing:.09em;color:var(--ink-3)}
@@ -77,7 +92,8 @@ a{color:#0b5fa5}
 .c-num{flex:none;width:22px;height:22px;border-radius:50%;background:var(--ink);
   color:var(--card);font-size:12px;font-weight:700;display:flex;
   align-items:center;justify-content:center;align-self:center}
-.c-title{flex:1 1 auto;font-weight:600}
+.c-title{flex:1 1 auto;font-weight:600;color:var(--ink);text-decoration:none}
+.c-title:hover{text-decoration:underline}
 .c-steps{flex:none;font-size:14px;color:var(--ink-3)}
 
 /* What a section needs, gathered before it starts, so following it is not
@@ -190,9 +206,47 @@ footer{color:var(--ink-3);font-size:13px;text-align:center;padding:8px 0 0}
   .section-head{break-before:page;page-break-before:always;margin:0 0 14px}
   .section-head:first-of-type{break-before:auto;page-break-before:auto}
   .done{color:#000}
+  .build-progress{display:none}
   footer{display:none}
   @page{margin:12mm}
 }
+"""
+
+
+_PROGRESS_SCRIPT = r"""
+(() => {
+  const boxes = Array.from(document.querySelectorAll('.done input[data-step]'));
+  const bar = document.getElementById('build-progress');
+  const label = document.getElementById('progress-label');
+  const reset = document.getElementById('reset-progress');
+  if (!bar || !label || !reset) return;
+
+  const key = `iqdraw-progress:${document.title}:${location.pathname}`;
+  const read = () => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(key));
+      if (Array.isArray(saved) && saved.length === boxes.length) {
+        boxes.forEach((box, index) => { box.checked = Boolean(saved[index]); });
+      }
+    } catch (_error) { /* Storage can be unavailable for local files. */ }
+  };
+  const update = () => {
+    const complete = boxes.filter((box) => box.checked).length;
+    bar.value = complete;
+    label.textContent = `${complete} of ${boxes.length} steps complete`;
+    try {
+      localStorage.setItem(key, JSON.stringify(boxes.map((box) => box.checked)));
+    } catch (_error) { /* Live progress still works without persistence. */ }
+  };
+
+  read();
+  boxes.forEach((box) => box.addEventListener('change', update));
+  reset.addEventListener('click', () => {
+    boxes.forEach((box) => { box.checked = false; });
+    update();
+  });
+  update();
+})();
 """
 
 
@@ -229,7 +283,7 @@ def _contents(build):
                 else f"steps {lo + 1}&ndash;{hi}")
         rows.append(
             f'<li><span class="c-num" aria-hidden="true">{n}</span>'
-            f'<span class="c-title">{_esc(section.title)}</span>'
+            f'<a class="c-title" href="#section-{n}">{_esc(section.title)}</a>'
             f'<span class="c-steps">{span}</span></li>'
         )
     return ('<div class="contents"><h2>What you will build</h2>'
@@ -287,6 +341,15 @@ def booklet(build, hero=True):
         shape.append(f"<p><b>Finished when:</b> {_esc(build.done)}</p>")
     shape.append("</div>")
     cover.append("".join(shape))
+    cover.append(
+        '<div class="build-progress">'
+        '<div class="progress-head">'
+        f'<p id="progress-label" aria-live="polite">0 of {n_steps} steps complete</p>'
+        '<button id="reset-progress" type="button">Reset progress</button>'
+        '</div>'
+        f'<progress id="build-progress" max="{max(n_steps, 1)}" value="0" '
+        'aria-labelledby="progress-label"></progress></div>'
+    )
     if hero:
         cover.append(f'<div class="hero">{build.hero_svg(styles=styles)}</div>')
     cover.append(_contents(build))
@@ -302,16 +365,18 @@ def booklet(build, hero=True):
     n_sections = sum(1 for lo, _ in runs if build.steps[lo].section)
 
     prev_angle = None
-    for part_no, (lo, hi) in enumerate(runs, start=1):
+    section_no = 0
+    for lo, hi in runs:
         section = build.steps[lo].section
         if section:
+            section_no += 1
             # The section says how long it is, so the reader can see the end
             # of this chunk from the start of it.  That is the same job the
             # cover's step count does for the build as a whole.
             n = hi - lo
             head = [
-                '<div class="section-head">',
-                f'<p class="section-kicker">Part {part_no} of {n_sections}</p>',
+                f'<div class="section-head" id="section-{section_no}">',
+                f'<p class="section-kicker">Part {section_no} of {n_sections}</p>',
                 f"<h2>{_esc(section.title)}</h2>",
                 f'<p class="section-len">{n} step{"s" if n != 1 else ""}</p>',
             ]
@@ -332,7 +397,8 @@ def booklet(build, hero=True):
         f"<style>{CSS}</style><style>{styles.css()}</style></head>"
         f'<body><main class="sheet">{"".join(parts_out)}'
         "<footer>Drawn with iqdraw &middot; VEX IQ (2nd gen) &middot; "
-        "1 grid unit = 12.7&nbsp;mm</footer></main></body></html>"
+        "1 grid unit = 12.7&nbsp;mm</footer></main>"
+        f"<script>{_PROGRESS_SCRIPT}</script></body></html>"
     )
 
 
@@ -376,7 +442,7 @@ def _steps_html(build, svgs, n_steps, styles, prev_angle):
             f'<h2 class="eyebrow">Step {number} '
             f'<span class="of">of {n_steps}</span></h2>'
             f"{turn}{note}{cap}</div>"
-            f'<label class="done"><input type="checkbox">'
+            f'<label class="done"><input type="checkbox" data-step="{number}">'
             f'<span class="vh">Mark step {number} done</span>'
             f'<span aria-hidden="true">done</span></label>'
             f"</div>"
