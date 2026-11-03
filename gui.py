@@ -27,17 +27,40 @@ from .gui_state import (
 )
 
 
+DETAIL_OPTIONS = {
+    "cad": "CAD models (recommended)",
+    "simple": "Procedural models (faster)",
+}
+CONTEXT_OPTIONS = {
+    "same": "Match new parts",
+    "cad": "CAD models",
+    "simple": "Procedural models (smaller file)",
+}
+
+
+def _option_label(value: str, options: dict[str, str]) -> str:
+    """Translate a stored/CLI value into friendly Studio copy."""
+    return options.get(value, options[next(iter(options))])
+
+
+def _option_value(label: str, options: dict[str, str]) -> str:
+    """Translate friendly Studio copy back to a stable stored/CLI value."""
+    return next((value for value, copy in options.items() if copy == label),
+                next(iter(options)))
+
+
 @dataclass(frozen=True)
 class RenderSettings:
     spec: pathlib.Path
     output: pathlib.Path
-    detail: str = "simple"
+    detail: str = parts.DEFAULT_DETAIL
     context_detail: str = "same"
     hero: bool = True
     checks: bool = True
     strict: bool = False
     svg_dir: Optional[pathlib.Path] = None
     png: bool = False
+    source_mtime_ns: Optional[int] = None
 
 
 def render_command(settings: RenderSettings) -> list[str]:
@@ -57,6 +80,16 @@ def render_command(settings: RenderSettings) -> list[str]:
     if settings.png:
         command.append("--png")
     return command
+
+
+def source_is_current(settings: RenderSettings) -> bool:
+    """Whether a completed render still represents the source it started on."""
+    if settings.source_mtime_ns is None:
+        return True
+    try:
+        return settings.spec.stat().st_mtime_ns == settings.source_mtime_ns
+    except OSError:
+        return False
 
 
 def inspection_command(path: pathlib.Path) -> list[str]:
@@ -156,7 +189,8 @@ class IQDrawApp:
     BORDER = ("#DFE5EF", "#283750")
     BLUE = "#246BFD"
     BLUE_DARK = "#1855D1"
-    GREEN = "#19A66A"
+    FOCUS = "#D97706"
+    GREEN = ("#087A4C", "#39D69A")
     AMBER = "#D88912"
 
     def __init__(self, root):
@@ -168,6 +202,7 @@ class IQDrawApp:
         self.examples = bundled_examples(pathlib.Path(__file__).resolve().parent)
         self._loaded_mtime: Optional[float] = None
         self._working = False
+        self._rendering = False
         self._events: queue.Queue = queue.Queue()
         self._configure_window()
         self._build_theme()
@@ -180,8 +215,16 @@ class IQDrawApp:
 
     def _configure_window(self):
         self.root.title("IQDraw Studio")
-        self.root.geometry("1180x790")
-        self.root.minsize(940, 660)
+        # Tiling compositors can ignore Tk's minimum size and squeeze the
+        # studio into a quarter-screen tile. The dialog type asks them to open
+        # this tool-sized window floating; users can still tile it afterwards.
+        if sys.platform.startswith("linux"):
+            try:
+                self.root.attributes("-type", "dialog")
+            except self.tk.TclError:
+                pass
+        self.root.geometry("1100x720")
+        self.root.minsize(760, 560)
         self.root.configure(fg_color=self.BG)
 
     def _build_theme(self):
@@ -195,11 +238,12 @@ class IQDrawApp:
         self.font_small = self.ctk.CTkFont(size=11)
 
     def _build_menu(self):
+        accelerator = "Cmd" if sys.platform == "darwin" else "Ctrl"
         menu = self.tk.Menu(self.root)
         file_menu = self.tk.Menu(menu, tearoff=False)
-        file_menu.add_command(label="New build…", accelerator="Ctrl+N",
+        file_menu.add_command(label="New build…", accelerator=f"{accelerator}+N",
                               command=self.new_build)
-        file_menu.add_command(label="Open build…", accelerator="Ctrl+O",
+        file_menu.add_command(label="Open build…", accelerator=f"{accelerator}+O",
                               command=self.choose_build)
         self.recent_menu = self.tk.Menu(file_menu, tearoff=False)
         file_menu.add_cascade(label="Open recent", menu=self.recent_menu)
@@ -210,12 +254,13 @@ class IQDrawApp:
         menu.add_cascade(label="File", menu=file_menu)
 
         self.build_menu = self.tk.Menu(menu, tearoff=False)
-        self.build_menu.add_command(label="Reload build", accelerator="Ctrl+R",
+        self.build_menu.add_command(label="Reload build", accelerator=f"{accelerator}+R",
                                     command=self.reload)
-        self.build_menu.add_command(label="Edit source", accelerator="Ctrl+E",
+        self.build_menu.add_command(label="Edit source", accelerator=f"{accelerator}+E",
                                     command=self.edit_source)
         self.build_menu.add_separator()
-        self.build_menu.add_command(label="Generate booklet", accelerator="Ctrl+G",
+        self.build_menu.add_command(label="Create booklet",
+                                    accelerator=f"{accelerator}+G",
                                     command=self.generate)
         self.build_menu.add_command(label="Open latest booklet",
                                     command=self.open_output)
@@ -256,12 +301,14 @@ class IQDrawApp:
             self.examples_menu.add_command(label="No examples installed", state="disabled")
 
     def _bind_shortcuts(self):
+        modifier = "Command" if sys.platform == "darwin" else "Control"
         bindings = {
-            "<Control-n>": self.new_build,
-            "<Control-o>": self.choose_build,
-            "<Control-r>": self.reload,
-            "<Control-e>": self.edit_source,
-            "<Control-g>": self.generate,
+            f"<{modifier}-n>": self.new_build,
+            f"<{modifier}-o>": self.choose_build,
+            f"<{modifier}-r>": self.reload,
+            f"<{modifier}-e>": self.edit_source,
+            f"<{modifier}-g>": self.generate,
+            f"<{modifier}-Return>": self.generate,
             "<F1>": self.show_getting_started,
         }
         for sequence, callback in bindings.items():
@@ -282,14 +329,14 @@ class IQDrawApp:
             text="Design, check, and publish clear VEX IQ build instructions.",
             font=self.font_body, text_color=self.MUTED,
         ).pack(anchor="w", pady=(2, 0))
-        self._secondary_button(header, "New build", self.new_build).pack(
+        self._secondary_button(
+            header, "New build", self.new_build, width=105,
+        ).pack(
             side="right", padx=(8, 0))
-        self._primary_button(header, "Open build", self.choose_build).pack(
+        self._primary_button(
+            header, "Open build", self.choose_build, width=105,
+        ).pack(
             side="right")
-        if self.examples:
-            self._secondary_button(
-                header, "Try an example", self.open_example,
-            ).pack(side="right", padx=(0, 8))
 
         source = self.ctk.CTkFrame(
             outer, fg_color=self.CARD, corner_radius=14,
@@ -316,26 +363,8 @@ class IQDrawApp:
                                 padx=(8, 18))
         source.columnconfigure(0, weight=1)
 
-        body = self.ctk.CTkFrame(outer, fg_color="transparent")
-        body.pack(fill="both", expand=True)
-        body.grid_columnconfigure(0, weight=3, uniform="main")
-        body.grid_columnconfigure(1, weight=2, uniform="main")
-        body.grid_rowconfigure(0, weight=1)
-        overview = self.ctk.CTkFrame(
-            body, fg_color=self.CARD, corner_radius=14,
-            border_width=1, border_color=self.BORDER,
-        )
-        settings = self.ctk.CTkFrame(
-            body, fg_color=self.CARD, corner_radius=14,
-            border_width=1, border_color=self.BORDER,
-        )
-        overview.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
-        settings.grid(row=0, column=1, sticky="nsew", padx=(7, 0))
-        self._build_overview(overview)
-        self._build_settings(settings)
-
         status = self.ctk.CTkFrame(outer, fg_color="transparent")
-        status.pack(fill="x", pady=(12, 0))
+        status.pack(fill="x", side="bottom", pady=(12, 0))
         self.status_var = self.tk.StringVar(value="Choose a build file to begin.")
         self.ctk.CTkLabel(
             status, textvariable=self.status_var, font=self.font_small,
@@ -346,7 +375,35 @@ class IQDrawApp:
             progress_color=self.BLUE,
         )
         self.progress.set(0)
-        self.progress.pack(side="right")
+
+        body = self.ctk.CTkTabview(
+            outer, fg_color="transparent", corner_radius=12,
+            segmented_button_selected_color=self.BLUE,
+            segmented_button_selected_hover_color=self.BLUE_DARK,
+        )
+        self.workspace_tabs = body
+        body.pack(fill="both", expand=True)
+        review_page = body.add("Review build")
+        export_page = body.add("Create booklet")
+        self._register_segmented_buttons(body)
+        overview = self.ctk.CTkFrame(
+            review_page, fg_color=self.CARD, corner_radius=14,
+            border_width=1, border_color=self.BORDER,
+        )
+        settings = self.ctk.CTkFrame(
+            export_page, fg_color=self.CARD, corner_radius=14,
+            border_width=1, border_color=self.BORDER,
+        )
+        overview.pack(fill="both", expand=True, padx=2, pady=2)
+        settings.pack(fill="both", expand=True, padx=2, pady=2)
+        self._build_overview(overview)
+        settings_body = self.ctk.CTkScrollableFrame(
+            settings, fg_color="transparent", corner_radius=0,
+        )
+        self._build_settings(settings_body, settings)
+        # Pack the pinned action footer (created by `_build_settings`) before
+        # this expanding body so Tk always reserves the footer's full height.
+        settings_body.pack(fill="both", expand=True, padx=1, pady=(1, 0))
 
     def _build_overview(self, parent):
         self.title_var = self.tk.StringVar(value="Build overview")
@@ -389,6 +446,7 @@ class IQDrawApp:
         steps_tab = self.tabs.add("Steps")
         inventory_tab = self.tabs.add("Parts")
         checks_tab = self.tabs.add("Checks")
+        self._register_segmented_buttons(self.tabs)
         self.checks_tab_name = "Checks"
         self.steps_frame = self.ctk.CTkScrollableFrame(
             steps_tab, fg_color="transparent", corner_radius=0,
@@ -405,8 +463,42 @@ class IQDrawApp:
         )
         self.checks_text.pack(fill="both", expand=True, padx=2, pady=2)
         self._set_checks("Open a build to run its checks.")
+        self._show_welcome()
 
-    def _build_settings(self, parent):
+    def _show_welcome(self):
+        """Put a useful first action in the otherwise empty review panel."""
+        self._clear_frame(self.steps_frame)
+        card = self.ctk.CTkFrame(
+            self.steps_frame, fg_color=self.CARD_ALT, corner_radius=12,
+            border_width=1, border_color=self.BORDER,
+        )
+        card.pack(fill="x", pady=5)
+        self.ctk.CTkLabel(
+            card, text="Start with a build", font=self.font_heading,
+            text_color=self.INK,
+        ).pack(anchor="w", padx=18, pady=(16, 0))
+        self.ctk.CTkLabel(
+            card,
+            text=("Open a Python build spec, create a starter, or explore a "
+                  "worked example. IQDraw will review every step before you "
+                  "create the booklet."),
+            font=self.font_body, text_color=self.MUTED, justify="left",
+            wraplength=560,
+        ).pack(anchor="w", padx=18, pady=(4, 14))
+        actions = self.ctk.CTkFrame(card, fg_color="transparent")
+        actions.pack(fill="x", padx=18, pady=(0, 18))
+        self._primary_button(
+            actions, "Open build", self.choose_build, width=120,
+        ).pack(side="left")
+        self._secondary_button(
+            actions, "New build", self.new_build, width=112,
+        ).pack(side="left", padx=(8, 0))
+        if self.examples:
+            self._secondary_button(
+                actions, "Try an example", self.open_example, width=126,
+            ).pack(side="left", padx=(8, 0))
+
+    def _build_settings(self, parent, actions_parent):
         self.ctk.CTkLabel(
             parent, text="Create booklet", font=self.font_heading,
             text_color=self.INK,
@@ -418,126 +510,246 @@ class IQDrawApp:
         form = self.ctk.CTkFrame(parent, fg_color="transparent")
         form.pack(fill="x", padx=20)
         self.output_var = self.tk.StringVar()
-        self._field_label(form, "Output HTML", 0)
+        self._field_label(form, "Output HTML", 0, columnspan=2)
         output_row = self.ctk.CTkFrame(form, fg_color="transparent")
-        output_row.grid(row=1, column=0, sticky="ew", pady=(4, 13))
-        self.ctk.CTkEntry(
+        output_row.grid(row=1, column=0, columnspan=2, sticky="ew",
+                        pady=(4, 13))
+        self.output_entry = self.ctk.CTkEntry(
             output_row, textvariable=self.output_var, height=35,
             fg_color=self.CARD_ALT, border_color=self.BORDER,
-        ).pack(
-            side="left", fill="x", expand=True)
+        )
+        self.output_entry.pack(side="left", fill="x", expand=True)
+        self._keyboard_entry(self.output_entry)
         self._ghost_button(
             output_row, "Choose…", self.choose_output, width=78,
         ).pack(side="left", padx=(7, 0))
 
-        self.detail_var = self.tk.StringVar(value=self.state.detail)
-        self._field_label(form, "Drawing detail", 2)
+        self.detail_var = self.tk.StringVar(
+            value=_option_label(self.state.detail, DETAIL_OPTIONS))
+        self._field_label(form, "Model geometry", 2, column=0)
+        self.context_var = self.tk.StringVar(
+            value=_option_label(self.state.context_detail, CONTEXT_OPTIONS))
+        self._field_label(form, "Previously built parts", 2, column=1)
         detail = self.ctk.CTkOptionMenu(
-            form, variable=self.detail_var, values=list(parts.DETAIL_LEVELS),
+            form, variable=self.detail_var, values=list(DETAIL_OPTIONS.values()),
             height=35, fg_color=self.CARD_ALT, button_color=self.BLUE,
             button_hover_color=self.BLUE_DARK, text_color=self.INK,
         )
-        detail.grid(row=3, column=0, sticky="ew", pady=(4, 13))
-        self.context_var = self.tk.StringVar(value=self.state.context_detail)
-        self._field_label(form, "Previously built parts", 4)
+        detail.grid(row=3, column=0, sticky="ew", padx=(0, 7), pady=(4, 4))
+        self._keyboard_control(detail, detail._clicked)
         context = self.ctk.CTkOptionMenu(
             form, variable=self.context_var,
-            values=["same", *parts.DETAIL_LEVELS], height=35,
+            values=list(CONTEXT_OPTIONS.values()), height=35,
             fg_color=self.CARD_ALT, button_color=self.BLUE,
             button_hover_color=self.BLUE_DARK, text_color=self.INK,
         )
-        context.grid(row=5, column=0, sticky="ew", pady=(4, 13))
+        context.grid(row=3, column=1, sticky="ew", padx=(7, 0), pady=(4, 4))
+        self._keyboard_control(context, context._clicked)
+        cad_status = ("Local CAD model library detected."
+                      if parts.HAS_CAD_MESHES else
+                      "CAD is the default; parts without a local mesh use the "
+                      "included precision model.")
+        self.ctk.CTkLabel(
+            form, text=cad_status, font=self.font_small,
+            text_color=self.GREEN if parts.HAS_CAD_MESHES else self.MUTED,
+            anchor="w", justify="left", wraplength=390,
+        ).grid(row=4, column=0, sticky="ew", padx=(0, 7), pady=(0, 13))
+        self.ctk.CTkLabel(
+            form,
+            text="Use procedural context to make large booklets smaller.",
+            font=self.font_small, text_color=self.MUTED,
+            anchor="w", justify="left", wraplength=390,
+        ).grid(row=4, column=1, sticky="ew", padx=(7, 0), pady=(0, 13))
+
+        self.ctk.CTkFrame(form, height=1, fg_color=self.BORDER).grid(
+            row=5, column=0, columnspan=2, sticky="ew", pady=(2, 11))
+        self._field_label(form, "BOOKLET", 6, column=0)
+        self._field_label(form, "EXTRA FILES", 6, column=1)
 
         self.hero_var = self.tk.BooleanVar(value=self.state.hero)
         self.check_var = self.tk.BooleanVar(value=self.state.checks)
         self.strict_var = self.tk.BooleanVar(value=self.state.strict)
         self.svg_var = self.tk.BooleanVar(value=self.state.export_svg)
         self.png_var = self.tk.BooleanVar(value=self.state.export_png)
-        self.ctk.CTkCheckBox(
+        hero_check = self.ctk.CTkCheckBox(
             form, text="Include finished model on cover", variable=self.hero_var,
             font=self.font_body, checkbox_width=20, checkbox_height=20,
-        ).grid(row=6, column=0, sticky="w", pady=4)
-        self.ctk.CTkCheckBox(
+        )
+        hero_check.grid(row=7, column=0, sticky="w", padx=(0, 7), pady=4)
+        self._keyboard_control(hero_check, hero_check.toggle)
+        checks = self.ctk.CTkCheckBox(
             form, text="Run build checks", variable=self.check_var,
             command=self._sync_strict, font=self.font_body,
             checkbox_width=20, checkbox_height=20,
-        ).grid(row=7, column=0, sticky="w", pady=4)
+        )
+        checks.grid(row=8, column=0, sticky="w", padx=(0, 7), pady=4)
+        self._keyboard_control(checks, checks.toggle)
         self.strict_check = self.ctk.CTkCheckBox(
             form, text="Stop if a check finds a problem",
             variable=self.strict_var, font=self.font_body,
             checkbox_width=20, checkbox_height=20,
         )
-        self.strict_check.grid(row=8, column=0, sticky="w", pady=4)
-        self.ctk.CTkFrame(form, height=1, fg_color=self.BORDER).grid(
-            row=9, column=0, sticky="ew", pady=(11, 7))
-        self.ctk.CTkCheckBox(
+        self.strict_check.grid(row=9, column=0, sticky="w", padx=(0, 7), pady=4)
+        self._keyboard_control(self.strict_check, self.strict_check.toggle)
+        svg = self.ctk.CTkCheckBox(
             form, text="Also save one SVG per step", variable=self.svg_var,
             font=self.font_body, checkbox_width=20, checkbox_height=20,
-        ).grid(row=10, column=0, sticky="w", pady=4)
+        )
+        svg.grid(row=7, column=1, sticky="w", padx=(7, 0), pady=4)
+        self._keyboard_control(svg, svg.toggle)
         png = self.ctk.CTkCheckBox(
             form, text="Also save PNG step images", variable=self.png_var,
             font=self.font_body, checkbox_width=20, checkbox_height=20,
         )
-        png.grid(row=11, column=0, sticky="w", pady=4)
+        png.grid(row=8, column=1, sticky="w", padx=(7, 0), pady=4)
+        self._keyboard_control(png, png.toggle)
         if not shutil.which("rsvg-convert"):
-            png.configure(state="disabled")
+            self._set_control_state(png, "disabled")
             self.png_var.set(False)
-        form.columnconfigure(0, weight=1)
+        form.columnconfigure(0, weight=1, uniform="settings")
+        form.columnconfigure(1, weight=1, uniform="settings")
 
+        footer = self.ctk.CTkFrame(
+            actions_parent, fg_color=self.CARD_ALT, corner_radius=0,
+        )
+        footer.pack(fill="x", side="bottom", padx=1, pady=(0, 1))
         self.generate_button = self._primary_button(
-            parent, "Generate booklet", self.generate, state="disabled",
+            footer, "Create booklet", self.generate, state="disabled",
         )
-        self.generate_button.pack(fill="x", padx=20, pady=(20, 8))
+        self.generate_button.pack(fill="x", padx=18, pady=(12, 7))
+        output_actions = self.ctk.CTkFrame(footer, fg_color="transparent")
+        output_actions.pack(fill="x", padx=18, pady=(0, 12))
         self.open_button = self._secondary_button(
-            parent, "Open latest booklet", self.open_output, state="disabled",
-        )
-        self.open_button.pack(fill="x", padx=20)
-        self.folder_output_button = self._secondary_button(
-            parent, "Show output folder", self.open_output_folder,
+            output_actions, "Open latest booklet", self.open_output,
             state="disabled",
         )
-        self.folder_output_button.pack(fill="x", padx=20, pady=(8, 18))
+        self.open_button.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.folder_output_button = self._secondary_button(
+            output_actions, "Show output folder", self.open_output_folder,
+            state="disabled",
+        )
+        self.folder_output_button.pack(
+            side="left", fill="x", expand=True, padx=(4, 0))
         self._sync_strict()
 
-    def _field_label(self, parent, text, row):
+    def _field_label(self, parent, text, row, column=0, columnspan=1):
         self.ctk.CTkLabel(
             parent, text=text, font=self.font_small, text_color=self.MUTED,
-        ).grid(row=row, column=0, sticky="w")
+        ).grid(row=row, column=column, columnspan=columnspan, sticky="w")
 
     def _primary_button(self, parent, text, command, **kwargs):
-        return self.ctk.CTkButton(
-            parent, text=text, command=command, height=37,
+        button = self.ctk.CTkButton(
+            parent, text=text, command=command, height=40,
             corner_radius=9, fg_color=self.BLUE, hover_color=self.BLUE_DARK,
             font=self.font_body, **kwargs,
         )
+        self._keyboard_control(button, button.invoke)
+        return button
 
     def _secondary_button(self, parent, text, command, **kwargs):
-        return self.ctk.CTkButton(
-            parent, text=text, command=command, height=37, corner_radius=9,
+        button = self.ctk.CTkButton(
+            parent, text=text, command=command, height=40, corner_radius=9,
             fg_color=self.CARD, hover_color=self.CARD_ALT,
             border_width=1, border_color=self.BORDER, text_color=self.INK,
             font=self.font_body, **kwargs,
         )
+        self._keyboard_control(button, button.invoke)
+        return button
 
     def _ghost_button(self, parent, text, command, **kwargs):
         kwargs.setdefault("width", 88)
-        return self.ctk.CTkButton(
-            parent, text=text, command=command, height=32,
+        button = self.ctk.CTkButton(
+            parent, text=text, command=command, height=36,
             corner_radius=8, fg_color="transparent",
             hover_color=self.CARD_ALT, text_color=self.BLUE,
             font=self.font_small, **kwargs,
         )
+        self._keyboard_control(button, button.invoke)
+        return button
+
+    def _keyboard_control(self, widget, activate):
+        """Make a CustomTkinter canvas control reachable and usable by Tab."""
+        canvas = getattr(widget, "_canvas", None)
+        if canvas is None:
+            return widget
+        if getattr(widget, "_iqdraw_keyboard", False):
+            return widget
+        widget._iqdraw_keyboard = True
+        # Tk canvas highlights are square, so keep the ring out of the way
+        # until the control actually has focus.  That preserves CTk's rounded
+        # silhouette while still making keyboard position unmistakable.
+        enabled = str(widget.cget("state")) != "disabled"
+        canvas.configure(takefocus=1 if enabled else 0, highlightthickness=0)
+
+        def show_focus(_event):
+            canvas.configure(
+                highlightthickness=2,
+                highlightbackground=self.FOCUS,
+                highlightcolor=self.FOCUS,
+            )
+
+        def hide_focus(_event):
+            canvas.configure(highlightthickness=0)
+
+        def invoke(_event):
+            if str(widget.cget("state")) != "disabled":
+                activate()
+            return "break"
+
+        canvas.bind("<FocusIn>", show_focus, add="+")
+        canvas.bind("<FocusOut>", hide_focus, add="+")
+        canvas.bind("<Return>", invoke, add="+")
+        canvas.bind("<space>", invoke, add="+")
+        return widget
+
+    @staticmethod
+    def _set_control_state(widget, state):
+        """Keep a CTk control's focusability in sync with its state."""
+        widget.configure(state=state)
+        canvas = getattr(widget, "_canvas", None)
+        if canvas is not None and getattr(widget, "_iqdraw_keyboard", False):
+            canvas.configure(takefocus=0 if state == "disabled" else 1)
+
+    def _keyboard_entry(self, entry):
+        """Give the native entry inside CTkEntry a visible focus state."""
+        native = entry._entry
+        native.configure(takefocus=1)
+        native.bind(
+            "<FocusIn>", lambda _event: entry.configure(border_color=self.FOCUS),
+            add="+",
+        )
+        native.bind(
+            "<FocusOut>", lambda _event: entry.configure(border_color=self.BORDER),
+            add="+",
+        )
+
+    def _register_segmented_buttons(self, tabview):
+        """Expose CustomTkinter's tab buttons to ordinary focus traversal."""
+        segmented = getattr(tabview, "_segmented_button", None)
+        for button in getattr(segmented, "_buttons_dict", {}).values():
+            self._keyboard_control(button, button.invoke)
 
     def _sync_strict(self):
-        self.strict_check.configure(state="normal" if self.check_var.get() else "disabled")
+        state = "normal" if self.check_var.get() else "disabled"
+        self._set_control_state(self.strict_check, state)
 
     def choose_build(self):
+        if self._rendering:
+            self.messagebox.showinfo(
+                "Booklet is being created",
+                "Wait for the current booklet to finish before opening another build.")
+            return
         selected = self.filedialog.askopenfilename(
             title="Open an IQDraw build", filetypes=(("Python build", "*.py"), ("All files", "*")))
         if selected:
             self.open_path(pathlib.Path(selected))
 
     def open_path(self, path: pathlib.Path, trusted=False):
+        if self._rendering:
+            self.messagebox.showinfo(
+                "Booklet is being created",
+                "Wait for the current booklet to finish before opening another build.")
+            return
         path = path.expanduser().resolve()
         if not path.is_file():
             self.messagebox.showerror(
@@ -552,15 +764,20 @@ class IQDrawApp:
         self.load(path)
 
     def _confirm_trusted(self, path):
-        if self.state.trust_notice_seen or path in self.state.existing_recent_files():
+        if path in self.state.existing_recent_files():
             return True
-        accepted = self.messagebox.askokcancel(
-            "Open a trusted build",
+        explanation = (
             "IQDraw build files are Python programs. They can do anything "
             "your Python account can do, so only open files you trust.\n\n"
             "IQDraw loads the file in a separate helper process for "
             "reliability, but that helper is not a security sandbox.\n\n"
-            f"Open this file?\n{path}",
+            if not self.state.trust_notice_seen else
+            "IQDraw build files are Python programs, so only open files you "
+            "trust. The inspection helper is not a security sandbox.\n\n"
+        )
+        accepted = self.messagebox.askokcancel(
+            "Open a trusted build",
+            explanation + f"Open this file?\n{path}",
             icon="warning",
         )
         if accepted:
@@ -614,6 +831,11 @@ class IQDrawApp:
         dialog.focus_set()
 
     def new_build(self):
+        if self._rendering:
+            self.messagebox.showinfo(
+                "Booklet is being created",
+                "Wait for the current booklet to finish before creating another build.")
+            return
         selected = self.filedialog.asksaveasfilename(
             title="Create a new IQDraw build", defaultextension=".py",
             filetypes=(("Python build", "*.py"),), initialfile="my-build.py")
@@ -646,10 +868,20 @@ class IQDrawApp:
         self._inspection_serial = getattr(self, "_inspection_serial", 0) + 1
         self.path_var.set(str(self.spec_path))
         self.output_var.set(str(self.spec_path.with_suffix(".html")))
-        self.reload_button.configure(state="normal")
-        self.edit_button.configure(state="normal")
-        self.folder_button.configure(state="normal")
-        self.generate_button.configure(state="disabled")
+        self._set_control_state(self.reload_button, "normal")
+        self._set_control_state(self.edit_button, "normal")
+        self._set_control_state(self.folder_button, "normal")
+        self._set_control_state(self.generate_button, "disabled")
+        self.title_var.set(
+            f"Reading {self.spec_path.stem.replace('-', ' ').title()}…")
+        self.subtitle_var.set("Inspecting steps, inventory, and build checks.")
+        for var in self.metric_vars:
+            var.set("…")
+        self._clear_frame(self.steps_frame)
+        self.ctk.CTkLabel(
+            self.steps_frame, text="Reading build…", font=self.font_body,
+            text_color=self.MUTED,
+        ).pack(anchor="w", padx=8, pady=12)
         self._busy("Reading build and running checks…")
         threading.Thread(target=self._inspect_worker,
                          args=(self.spec_path, self._inspection_serial),
@@ -661,14 +893,22 @@ class IQDrawApp:
 
     def _inspect_worker(self, path, serial):
         try:
-            result = subprocess.run(inspection_command(path), capture_output=True,
-                                    text=True, cwd=str(path.parent))
+            result = subprocess.run(
+                inspection_command(path), capture_output=True, text=True,
+                cwd=str(path.parent), timeout=30,
+            )
             if result.returncode:
                 message = (result.stderr or result.stdout or
                            "The inspection helper stopped unexpectedly.").strip()
                 self._events.put(("inspect_error", serial, message))
                 return
             self._events.put(("inspected", serial, json.loads(result.stdout)))
+        except subprocess.TimeoutExpired:
+            self._events.put((
+                "inspect_error", serial,
+                "The build took longer than 30 seconds to inspect. Check its "
+                "top-level code for long-running work, then reload it.",
+            ))
         except (OSError, ValueError) as exc:
             self._events.put(("inspect_error", serial,
                               str(exc) or exc.__class__.__name__))
@@ -702,8 +942,12 @@ class IQDrawApp:
             self._capture_preferences()
             self._save_state()
             self._rebuild_file_menus()
-        self.generate_button.configure(state="normal")
-        self._idle(f"Ready · {summary['steps']} steps and {summary['parts']} parts")
+        self._set_control_state(self.generate_button, "normal")
+        detail = _option_value(self.detail_var.get(), DETAIL_OPTIONS)
+        geometry = ("CAD models selected" if detail == "cad"
+                    else "Procedural models selected")
+        self._idle(
+            f"Ready · {summary['steps']} steps · {summary['parts']} parts · {geometry}")
 
     def _set_checks(self, message):
         self.checks_text.configure(state="normal")
@@ -759,6 +1003,7 @@ class IQDrawApp:
             return
         self.tabs.rename(self.checks_tab_name, name)
         self.checks_tab_name = name
+        self._register_segmented_buttons(self.tabs)
 
     def choose_output(self):
         initial = pathlib.Path(self.output_var.get()) if self.output_var.get() else None
@@ -780,14 +1025,22 @@ class IQDrawApp:
         if output.suffix.lower() not in (".html", ".htm"):
             output = output.with_suffix(".html")
             self.output_var.set(str(output))
-        return RenderSettings(self.spec_path, output.resolve(), self.detail_var.get(),
-                              self.context_var.get(), self.hero_var.get(), self.check_var.get(),
+        try:
+            source_mtime_ns = self.spec_path.stat().st_mtime_ns
+        except OSError as exc:
+            raise ValueError(f"The build source is no longer available: {exc}") from exc
+        return RenderSettings(self.spec_path, output.resolve(),
+                              _option_value(self.detail_var.get(), DETAIL_OPTIONS),
+                              _option_value(self.context_var.get(), CONTEXT_OPTIONS),
+                              self.hero_var.get(), self.check_var.get(),
                               self.strict_var.get(),
                               (output.resolve().parent / f"{output.stem}-steps"
                                if self.svg_var.get() or self.png_var.get() else None),
-                              self.png_var.get())
+                              self.png_var.get(), source_mtime_ns)
 
     def generate(self):
+        if self._working or self._rendering:
+            return
         try:
             settings = self._settings()
         except ValueError as exc:
@@ -800,8 +1053,9 @@ class IQDrawApp:
         except OSError as exc:
             self.messagebox.showerror("Can't create output folder", str(exc))
             return
-        self.generate_button.configure(state="disabled")
-        self.open_button.configure(state="disabled")
+        self._set_control_state(self.generate_button, "disabled")
+        self._set_control_state(self.open_button, "disabled")
+        self._rendering = True
         self._busy("Drawing the booklet… Larger builds may take a moment.")
         threading.Thread(target=self._render_worker, args=(settings,), daemon=True).start()
 
@@ -821,12 +1075,25 @@ class IQDrawApp:
                 if kind == "inspected" and event[1] == self._inspection_serial:
                     self._show_summary(event[2])
                 elif kind == "inspect_error" and event[1] == self._inspection_serial:
+                    self.title_var.set("Build couldn't be opened")
+                    self.subtitle_var.set("Fix the source issue, then reload the build.")
+                    for var in self.metric_vars:
+                        var.set("—")
+                    self._clear_frame(self.steps_frame)
+                    self.ctk.CTkLabel(
+                        self.steps_frame,
+                        text="The source could not be inspected. Use Edit source, "
+                             "fix the reported issue, then reload.",
+                        font=self.font_body, text_color=self.MUTED,
+                        justify="left", wraplength=560,
+                    ).pack(anchor="w", padx=8, pady=12)
                     self._idle("Could not read this build.")
                     self.messagebox.showerror("Build couldn't be opened", event[2])
                 elif kind == "rendered":
                     self._render_done(event[1], event[2])
                 elif kind == "render_error":
-                    self.generate_button.configure(state="normal")
+                    self._rendering = False
+                    self._set_control_state(self.generate_button, "normal")
                     self._idle("Booklet generation failed.")
                     self.messagebox.showerror("Booklet couldn't be created", event[2])
         except queue.Empty:
@@ -834,20 +1101,35 @@ class IQDrawApp:
         self.root.after(80, self._poll_events)
 
     def _render_done(self, settings, result):
-        self.generate_button.configure(state="normal")
+        self._rendering = False
+        self._set_control_state(self.generate_button, "normal")
         if result.returncode:
             self._idle("Booklet generation failed.")
             message = (result.stderr or result.stdout or "Unknown rendering error").strip()
             self.messagebox.showerror("Booklet couldn't be created", message)
             return
-        self.open_button.configure(state="normal")
-        self.folder_output_button.configure(state="normal")
+        self._set_control_state(self.open_button, "normal")
+        self._set_control_state(self.folder_output_button, "normal")
+        if not source_is_current(settings):
+            self._idle("Booklet created from an older version of the source.")
+            self.messagebox.showwarning(
+                "Source changed while drawing",
+                "The build source changed while IQDraw was creating the "
+                "booklet, so the output may be out of date. Studio will "
+                "reload the latest source now; create the booklet again "
+                "after the checks finish.",
+            )
+            self.load(settings.spec)
+            return
         self._idle((result.stdout or f"Created {settings.output}").strip())
         warnings = result.stderr.strip()
         if warnings:
             self.messagebox.showwarning("Booklet created with check results", warnings)
         else:
-            self.open_output()
+            try:
+                _open_in_system(settings.output)
+            except OSError as exc:
+                self.messagebox.showerror("Can't open booklet", str(exc))
 
     def open_output(self):
         try:
@@ -891,8 +1173,9 @@ class IQDrawApp:
     def _capture_preferences(self):
         if not hasattr(self, "detail_var"):
             return
-        self.state.detail = self.detail_var.get()
-        self.state.context_detail = self.context_var.get()
+        self.state.detail = _option_value(self.detail_var.get(), DETAIL_OPTIONS)
+        self.state.context_detail = _option_value(
+            self.context_var.get(), CONTEXT_OPTIONS)
         self.state.hero = self.hero_var.get()
         self.state.checks = self.check_var.get()
         self.state.strict = self.strict_var.get()
@@ -923,10 +1206,11 @@ class IQDrawApp:
             "2. Choose New build to create your own short Python spec.\n\n"
             "3. Edit the steps, then return to IQDraw Studio. The app reloads "
             "when the source changes.\n\n"
-            "4. Review Steps, Parts, and Checks. Choose Generate booklet to "
+            "4. Review Steps, Parts, and Checks. Choose Create booklet to "
             "create a printable, offline HTML guide.\n\n"
-            "Tip: simple detail is fast and included. CAD detail only changes "
-            "the drawing when optional local meshes are installed.",
+            "Tip: CAD models are the default. If a local CAD mesh is not "
+            "available for a part, IQDraw automatically uses its included "
+            "precision model.",
         )
 
     def show_about(self):
@@ -946,11 +1230,14 @@ class IQDrawApp:
     def _busy(self, message):
         self._working = True
         self.status_var.set(message)
+        if not self.progress.winfo_manager():
+            self.progress.pack(side="right")
         self.progress.start()
 
     def _idle(self, message):
         self._working = False
         self.progress.stop()
+        self.progress.pack_forget()
         self.status_var.set(message)
 
 

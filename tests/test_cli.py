@@ -6,6 +6,7 @@ argument parsing, exit codes and the messages printed on failure are all
 covered - those are the whole interface for anyone who never opens the source.
 """
 
+import json
 import pathlib
 import subprocess
 import sys
@@ -40,8 +41,9 @@ GOOD = """
 b = Build("Good", done="it is rigid")
 with b.step("Lay the beam down.") as s:
     s.add("beam_2x12", (0, 0, 0))
-with b.step("Pin it.") as s:
+with b.step("Pin a second beam on top.") as s:
     s.add("pin_1x1", (0, 0, 0.25), axis="z", arrow=True)
+    s.add("beam_1x4", (0, 0, 0.5))
 """
 
 
@@ -77,6 +79,35 @@ class TestRendering(_Temp):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(sorted(p.name for p in steps.glob("*.svg")),
                          ["step-01.svg", "step-02.svg"])
+        self.assertIn("(2 files)", r.stdout)
+
+    def test_png_output_reports_and_keeps_only_current_files(self):
+        out = self.tmp / "out.html"
+        steps = self.tmp / "steps"
+        steps.mkdir()
+        (steps / "step-03.png").write_bytes(b"stale")
+        r = run(self.spec(GOOD), "-o", out, "--svg-dir", steps,
+                "--detail", "simple", "--png")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        if "rsvg-convert not found" in r.stderr:
+            self.assertEqual(list(steps.glob("*.png")), [])
+            self.assertIn("(2 files)", r.stdout)
+            return
+        self.assertEqual(sorted(p.name for p in steps.glob("*.png")),
+                         ["step-01.png", "step-02.png"])
+        self.assertIn("(4 files)", r.stdout)
+
+    def test_a_shorter_rerender_removes_only_stale_step_files(self):
+        out = self.tmp / "out.html"
+        steps = self.tmp / "steps"
+        steps.mkdir()
+        (steps / "step-03.svg").write_text("stale")
+        (steps / "notes.svg").write_text("keep me")
+        r = run(self.spec(GOOD), "-o", out, "--svg-dir", steps,
+                "--detail", "simple")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((steps / "step-03.svg").exists())
+        self.assertEqual((steps / "notes.svg").read_text(), "keep me")
 
     def test_simple_detail_is_much_smaller_than_cad(self):
         a, b = self.tmp / "cad.html", self.tmp / "simple.html"
@@ -134,7 +165,76 @@ class TestChecks(_Temp):
         self.assertEqual(r.stderr.strip(), "")
 
 
+class TestInspect(_Temp):
+    def test_it_prints_the_build_as_json(self):
+        r = run(self.spec(GOOD), "--inspect")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data = json.loads(r.stdout)
+        self.assertEqual([p["name"] for p in data["parts"]],
+                         ["beam_2x12", "pin_1x1", "beam_1x4"])
+        self.assertEqual(data["parts"][1]["joined"], [0, 2])
+        self.assertEqual(data["problems"], [])
+
+    def test_at_reports_what_is_at_a_point(self):
+        r = run(self.spec(GOOD), "--inspect", "--at", "0,0,0.25")
+        query = json.loads(r.stdout)["query"]
+        self.assertEqual(query["parts"], [0, 1, 2])
+        self.assertEqual(sorted(h["part"] for h in query["holes"]), [0, 2])
+
+    def test_at_needs_inspect_and_three_numbers(self):
+        spec = self.spec(GOOD)
+        self.assertIn("needs --inspect", run(spec, "--at", "0,0,0").stderr)
+        self.assertIn("three numbers",
+                      run(spec, "--inspect", "--at", "0,0").stderr)
+
+
+class TestCatalogue(unittest.TestCase):
+    def test_parts_lists_every_family(self):
+        r = run("--parts")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        families = {f["family"] for f in json.loads(r.stdout)}
+        self.assertIn("beam", families)
+        self.assertIn("corner", families)
+
+    def test_part_gives_one_parts_holes(self):
+        data = json.loads(run("--part", "beam_1x4").stdout)
+        self.assertEqual([h["at"] for h in data["holes"]],
+                         [[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]])
+        self.assertEqual(data["envelope"], [[-0.5, -0.5, -0.25,
+                                             3.5, 0.5, 0.25]])
+
+    def test_an_unknown_part_fails_with_a_hint(self):
+        r = run("--part", "beem_1x8")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("did you mean", r.stderr)
+
+
+class TestViews(_Temp):
+    def test_views_are_written_without_a_booklet(self):
+        spec = self.spec(GOOD)
+        r = run(spec, "--views", self.tmp / "v", "--detail", "simple")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((self.tmp / "v" / "view-top.svg").exists())
+        self.assertFalse(spec.with_suffix(".html").exists())
+
+    def test_a_sheet_and_a_booklet_when_both_are_asked_for(self):
+        out = self.tmp / "o.html"
+        r = run(self.spec(GOOD), "--sheet", self.tmp / "s.svg", "-o", out,
+                "--detail", "simple")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Step 2 of 2", (self.tmp / "s.svg").read_text())
+        self.assertTrue(out.exists())
+
+
 class TestErrors(_Temp):
+    def test_check_modes_cannot_contradict_each_other(self):
+        spec = self.spec(GOOD)
+        for option in ("--strict", "--check-only"):
+            with self.subTest(option=option):
+                r = run(spec, "--no-check", option)
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn("cannot be used with --no-check", r.stderr)
+
     def test_an_unknown_part_names_the_line(self):
         spec = self.spec('b = Build("x")\n'
                          'with b.step("s") as s:\n'

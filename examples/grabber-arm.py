@@ -15,16 +15,14 @@ and it is worth reading for that:
   * the second finger is a mirror, not a rotation.  Nothing you can do by
     turning a left finger makes a right one
 
-  * eighteen steps in seven named sections, each framed on the build so far
+  * every pivot runs through real holes.  The arm swings about a shaft along
+    y, so everything that shaft passes through - towers, spacers, arm beams -
+    stands with its holes facing y
 
-The heights, since a floating arm is the thing that is easy to get wrong:
+The layout across the robot, at the pivot (y, left to right):
 
-    rails                   z = 0      (0.5 thick, so -0.25 .. +0.25)
-    cross beams and the     z = 0.5    resting on the rails
-      towers' feet
-    tower top hole          z = 4.5    corner_2x4 feet at 0.5, four holes up
-    arm beams               z = 4.5    on the pivot shaft, between the towers
-    claw                    z = 5.0    resting on the arm beam tips
+    collar | tower | spacer | arm   ...claw...   arm | spacer | tower | collar
+              0.5     0.875   1.25                4.75   5.125    5.5
 
 Coordinates are 0-BASED.  The robot faces -x: the arm reaches out that way.
 """
@@ -33,39 +31,38 @@ from iqdraw import Assembly, Build
 
 from _modules import add_chassis
 
-TOWER_X = 0            # the towers stand on the front holes of each rail
-TOWER_Y = (-1, 6)      # the outer hole of each rail
-FOOT_Z = 0.5           # a corner's foot rests on the rail, like a cross beam
-PIVOT_Z = 4.5          # four holes up the tower: where the arm swings
-ARM_Y = (0, 5)         # the arm beams, just inside the towers
-ARM_TIP = -5           # a 1x6 beam reaching forward from the pivot
-SHAFT_AT = -1.5        # the pivot shaft starts just outside the near tower
-RETAIN_Y = (-1.7, 6.7) # collars, flush against the outer face of each tower
-CLAW_Z = 5.0           # the claw rests on top of the arm beam tips
+PIVOT_Z = 5            # the tower's top hole, five up from the rail's bottom
+ARM_REACH = (0, -4, -5)  # pivot hole, then the two holes the fingers pin to
+TIE_X = -2             # the standoff that makes both arm beams one arm
+STAND = (0, -90, 90)   # a beam stood upright, holes facing along y
+INSIDE = ("+y", "-y")  # which way is inwards from each rail, y = 0 first
+OUTSIDE = {"+y": "-y", "-y": "+y"}
 
 # ------------------------------------------------------------------- a finger
-# Built at its own origin: the beam reaches out along -x and the tip turns
-# inward along +y.  That inward turn is what makes a finger handed - and so
-# what makes the second one a mirror.
+# Built at its own origin: a beam on edge reaching out along -x, with a
+# standoff at the tip pointing inward along +y.  That inward tip is what makes
+# a finger handed - and so what makes the second one a mirror.
 
 finger = Assembly("Claw Finger")
 
-with finger.step("Lay a 1x4 beam down. This is one finger.") as s:
-    s.add("beam_1x4", (0, 0, 0), rot=(0, 0, 180))
+with finger.step("Stand a 1x4 beam on its edge. This is one finger.") as s:
+    blade = s.add("beam_1x4", (0, 0, 0), rot=(90, 0, 180))
 
-with finger.step("Pin a 1x2 beam across the tip, turned a quarter turn so it "
-                 "points inwards.",
+with finger.step("Pin a 1x standoff to the inside of the tip, pointing "
+                 "inwards.",
                  caption="This is the part that actually grips. Both fingers "
-                         "turn in towards each other.") as s:
-    s.add("beam_1x2", (-3, 0, 0.5), rot=(0, 0, 90), arrow=True)
-    s.add("pin_1x1", (-3, 0, 0.25), axis="z", arrow=True)
+                         "point in towards each other.") as s:
+    tip = blade.hole(3, side="+y")
+    s.add("pin_1x1", tip, arrow="-y")
+    s.add("standoff_1", tip, arrow="-y")
 
 # --------------------------------------------------------------------- a claw
-# An assembly made of assemblies: two fingers, the second one mirrored.
+# An assembly made of assemblies: two fingers, the second one mirrored, set
+# far enough apart that their two standoff tips meet in the middle.
 
 claw = Assembly("Claw")
 claw.place(finger, at=(0, 0, 0))
-claw.place(finger, at=(0, 5, 0), mirror="y",
+claw.place(finger, at=(0, 2.5, 0), mirror="y",
            note="Build a second finger and mirror it, so the two tips face "
                 "each other.",
            caption="Lay them next to each other first. If both tips point "
@@ -79,70 +76,89 @@ b = Build(
     intro="The rolling drive base, with two towers, an arm that swings on a "
           "shaft, and a claw that grips. The arm is moved by hand. Build "
           "time is about 45 minutes.",
-    done="the arm swings up and down freely, and both claw tips meet in the "
-         "middle when you close them",
+    done="the arm swings up and down freely, and the two claw tips meet in "
+         "the middle",
     scale=26,
     view_rz=-24,
     context_detail="simple",
 )
 
-add_chassis(b, first_section="One side frame")
+chassis = add_chassis(b, first_section="One side frame")
 
 # ------------------------------------------------------------------- the tower
 
 b.section("The two towers",
-          "These hold the arm up. They go on the outer hole of each rail, "
+          "These hold the arm up. They stand inside the front of each rail, "
           "clear of the wheels.")
 
-with b.step("Stand a 2x4 corner connector on each rail at the front, foot "
-            "pointing backwards.",
-            caption="The tall leg goes up. Both towers lean the same way.") as s:
-    s.many("corner_2x4", [(TOWER_X, y, FOOT_Z) for y in TOWER_Y], arrow=True)
+with b.step("Push two pins into the inside of each rail at the front hole, "
+            "one in each row.",
+            caption="Push each one halfway in. The tower goes on the "
+                    "other half.") as s:
+    for rail, side in zip(chassis.rails, INSIDE):
+        s.many("pin_1x1", [rail.hole(0, r, side=side) for r in (0, 1)],
+               arrow=OUTSIDE[side])
 
-with b.step("Pin each tower foot down into the rail underneath - two pins "
-            "each.",
-            caption="Two pins, not one. One pin lets the tower rock "
-                    "forwards.") as s:
-    s.many("pin_1x1",
-           [(x, y, 0.25) for y in TOWER_Y for x in (TOWER_X, TOWER_X + 1)],
-           axis="z", arrow=True)
+with b.step("Press a 1x6 beam onto each pair of pins, standing straight up.",
+            caption="Both towers stand upright and face each other "
+                    "across the robot.") as s:
+    towers = [s.add("beam_1x6", rail.hole(0), rot=STAND, on=rail, side=side,
+                    arrow=OUTSIDE[side])
+              for rail, side in zip(chassis.rails, INSIDE)]
 
 # --------------------------------------------------------------------- the arm
 
-b.section("The arm", "Both beams have to swing together, so they share one "
-                     "shaft.")
+b.section("The arm", "Both beams swing on one shaft, and a standoff ties them "
+                     "together so they move as one arm.")
 
-with b.step("Hold a 1x6 beam against the inside of each tower, reaching "
-            "forwards, with its end hole level with the top of the tower.",
+with b.step("Slide a spacer onto the inside of each tower's top hole, then "
+            "hold a 1x6 beam on edge against it, reaching forwards.",
             caption="Nothing holds these yet. The shaft in the next step is "
                     "what catches them.") as s:
-    s.many("beam_1x6", [(0, y, PIVOT_Z) for y in ARM_Y], rot=(0, 0, 180))
+    arms = []
+    for tower, side in zip(towers, INSIDE):
+        sp = s.add("spacer", tower.hole(PIVOT_Z), on=tower, side=side)
+        arms.append(s.add("beam_1x6", tower.hole(PIVOT_Z), rot=(90, 0, 180),
+                          on=sp, side=side))
 
-with b.step("Push one long shaft through the whole lot: tower, arm, arm, "
-            "tower.",
-            caption="Line up all four holes before you push. If it will not "
+with b.step("Push one long shaft through the whole lot: tower, spacer, arm, "
+            "arm, spacer, tower.",
+            caption="Line up all six holes before you push. If it will not "
                     "go, one arm beam is a hole out.") as s:
-    s.add("shaft_9", (TOWER_X, SHAFT_AT, PIVOT_Z), axis="y", arrow="+y")
+    s.add("shaft_7", towers[0].hole(PIVOT_Z) + (0, -0.15, 0), arrow="+y")
 
 with b.step("Lock a collar on each end of the shaft, outside the towers.",
             caption="Leave a little play - the arm has to swing, not "
                     "grip.") as s:
-    s.many("collar", [(TOWER_X, y, PIVOT_Z) for y in RETAIN_Y], axis="y",
-           arrow=True)
+    for tower, side in zip(towers, INSIDE):
+        s.add("collar", tower.hole(PIVOT_Z), on=tower, side=OUTSIDE[side],
+              arrow=side)
+
+with b.step("Tie the two arm beams together with a 3x standoff, two holes "
+            "in from the pivot.",
+            caption="A pin through each arm beam into each end of the "
+                    "standoff.") as s:
+    near = arms[0].hole(abs(TIE_X), side="+y")
+    s.add("pin_1x1", near, arrow="+y")
+    s.add("standoff_3", near)
+    s.add("pin_1x1", arms[1].hole(abs(TIE_X), side="-y"), arrow="-y")
 
 # -------------------------------------------------------------------- the claw
 
-b.place(claw, at=(ARM_TIP, ARM_Y[0], CLAW_Z), section="The claw")
+claw_at = arms[0].hole(abs(ARM_REACH[1]), side="+y") + (0, 0.25, 0)
+b.place(claw, at=claw_at, section="The claw")
 
 b.section("Fitting the claw")
 
-with b.step("Pin each finger down onto the end of an arm beam.",
-            caption="The fingers sit on top of the arm, not inside it.") as s:
-    s.many("pin_1x1", [(ARM_TIP, y, 4.75) for y in ARM_Y], axis="z",
-           arrow=True)
+with b.step("Pin each finger to the inside of the end of an arm beam - two "
+            "pins each.",
+            caption="Two pins, not one. One pin lets the finger flop.") as s:
+    for arm, side in zip(arms, INSIDE):
+        s.many("pin_1x1", [arm.hole(abs(x), side=side) for x in ARM_REACH[1:]],
+               arrow=side)
 
 with b.step("Check it. Push the base along the floor, then swing the arm up "
-            "and down. Close the two tips together.",
+            "and down. Look down the claw: the two tips should meet.",
             caption="The arm should move with one finger and stay where you "
                     "leave it. If it drops, the collars are too tight or too "
                     "loose.") as s:

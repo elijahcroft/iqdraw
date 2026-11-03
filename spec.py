@@ -22,13 +22,14 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 
+from . import joints
 from .geom import (
     AXIS_ROT, IDENTITY, MIRROR_ROT, Transform, euler, mat_mul,
 )
 from .parts import Part, UnknownPart, get
 from .render import (
-    Placement, RenderOpts, arrow_dir, arrow_tail, bounds, exploded, render,
-    view_rotation, visible, world_prims,
+    ARROW_DIRS, Placement, RenderOpts, arrow_dir, arrow_tail, bounds,
+    exploded, render, view_rotation, visible, world_prims,
 )
 
 
@@ -62,6 +63,233 @@ def _orient(rot=None, axis=None, mirror=None):
     if rot:
         m = mat_mul(euler(*rot), m)
     return m
+
+
+def _clean(v):
+    # Rotations leave 1e-17 crumbs where a zero belongs; nobody wants to
+    # read them back out of a coordinate, or see -0.
+    return round(float(v), 9) + 0.0
+
+
+class Point(tuple):
+    """
+    An (x, y, z) in hole units, which may carry the axis of the hole it came
+    from - so a pin or shaft placed at it lines itself up without `axis=`.
+
+    `+` and `-` add and subtract coordinates instead of concatenating tuples:
+    `rail.hole(1) + (0, 2.2, 0)` is the point 2.2 holes further along +y.
+    """
+
+    def __new__(cls, xyz, axis=None):
+        p = super().__new__(cls, (_clean(v) for v in xyz))
+        p.axis = tuple(_clean(v) for v in axis) if axis is not None else None
+        return p
+
+    def __add__(self, other):
+        return Point((a + b for a, b in zip(self, other)), self.axis)
+
+    def __sub__(self, other):
+        return Point((a - b for a, b in zip(self, other)), self.axis)
+
+
+def _direction(side):
+    try:
+        return ARROW_DIRS[side]
+    except (KeyError, TypeError):
+        raise SpecError(f"side must be one of {sorted(ARROW_DIRS)}, "
+                        f"got {side!r}") from None
+
+
+def _axis_of(d):
+    """(index, sign) of an axis-aligned direction."""
+    k = max(range(3), key=lambda i: abs(d[i]))
+    return k, (1 if d[k] > 0 else -1)
+
+
+class Ref:
+    """
+    A placed part, returned by `s.add()`, for placing other parts against it.
+
+        rail = s.add("beam_2x12", (0, 0, 0))
+        s.add("pin_1x1", rail.hole(3, side="up"))      # half in, half proud
+        s.add("shaft_4", rail.hole(1))                 # straight through
+        spacer = s.add("spacer", rail.hole(1), on=rail)  # resting on top
+
+    Coordinates are those of the `Build` or `Assembly` the part was added to.
+    Sizes are nominal - a beam is 0.5 thick, a spacer 0.25 - which is what
+    parts measure when they are stacked, not what their molded rims draw at.
+    """
+
+    def __init__(self, name, tf):
+        self.name = name
+        self.tf = tf
+        self._placed = joints.place(0, 0, name, None, tf)
+
+    def __repr__(self):
+        return f"<Ref {self._placed.label}>"
+
+    @property
+    def pos(self):
+        """Where the part's first hole is - the `at` it was placed with."""
+        return Point(self.tf.pos, self.axis)
+
+    @property
+    def axis(self):
+        """Where the part's own +z points: the axis of a pin, shaft, gear,
+        wheel or spacer, and straight out of a flat beam's face."""
+        return tuple(_clean(v) for v in self._placed.axis)
+
+    @property
+    def box(self):
+        """(x0, y0, z0, x1, y1, z1), the space the part fills."""
+        return tuple(_clean(v) for v in self._placed.box)
+
+    def face(self, side):
+        """The coordinate of the part's outside face toward `side` ('+x',
+        '-y', 'up', ...): `face('+z')` is the height of its top."""
+        k, sign = _axis_of(_direction(side))
+        return self.box[k + 3] if sign > 0 else self.box[k]
+
+    @property
+    def top(self):
+        return self.face("+z")
+
+    @property
+    def bottom(self):
+        return self.face("-z")
+
+    @property
+    def holes(self):
+        """Every hole, as a Point carrying its axis."""
+        return [Point(h.center, h.axis) for h in self._placed.holes]
+
+    def hole(self, x, y=0, z=0, side=None):
+        """
+        The hole at (x, y, z) in the part's OWN hole coordinates - `hole(3)`
+        is the fourth hole along a beam, `hole(3, 1)` the one beside it in a
+        2-wide beam, `hole(0, 0, 2)` two up a corner connector's upright.
+        A gear's, wheel's, collar's or spacer's centre bore is `hole(0)`.
+
+        The point is the hole's centre, in the middle of the part.  `side`
+        moves it out to the face the hole opens onto - `side="up"` is the
+        top of a flat beam's hole, which is where a pin sits to join it to
+        the next beam up.
+        """
+        want = (float(x), float(y), float(z))
+        local = joints.local_holes(self.name)
+        for i, h in enumerate(local):
+            if all(abs(a - b) < 1e-6 for a, b in zip(h.center, want)):
+                break
+        else:
+            grid = [h for h in local
+                    if all(abs(v - round(v)) < 1e-6 for v in h.center)]
+            if len(grid) > 8:
+                grid = grid[:6] + [None] + grid[-1:]
+            listed = ", ".join(
+                "..." if h is None else
+                "(" + ", ".join(f"{v:g}" for v in h.center) + ")"
+                for h in grid)
+            raise SpecError(f"{self.name} has no hole at ({x:g}, {y:g}, "
+                            f"{z:g}) - its holes are at {listed}")
+        h = self._placed.holes[i]
+        center = h.center
+        if side is not None:
+            d = _direction(side)
+            along = sum(a * b for a, b in zip(d, h.axis))
+            if abs(along) < 0.9:
+                k, _ = _axis_of(h.axis)
+                raise SpecError(f"that hole in {self.name} runs along "
+                                f"{'xyz'[k]}, so side must be "
+                                f"'+{'xyz'[k]}' or '-{'xyz'[k]}', "
+                                f"got {side!r}")
+            reach = h.half if along > 0 else -h.half
+            center = tuple(c + a * reach for c, a in zip(center, h.axis))
+        return Point(center, h.axis)
+
+    def meshing(self, gear, toward):
+        """
+        Where `gear` has to sit to mesh with this one, `toward` a direction
+        across this gear's face: `g12.meshing("gear_36", "+x")` is 2 holes
+        along +x.  Spacing is teeth/24 per gear, so it lands on the hole
+        grid for every pair the kit makes.
+        """
+        mine = joints._LEN.match(self.name)
+        theirs = joints._LEN.match(gear)
+        if not (mine and mine[1] == "gear"):
+            raise SpecError(f"meshing() is for gears; this is {self.name}")
+        if not (theirs and theirs[1] == "gear"):
+            raise SpecError(f"meshing() needs a gear name like 'gear_36', "
+                            f"got {gear!r}")
+        d = _direction(toward)
+        if abs(sum(a * b for a, b in zip(d, self.axis))) > 0.1:
+            raise SpecError(f"toward={toward!r} runs along this gear's own "
+                            f"shaft; pick a direction across its face")
+        apart = (int(mine[2]) + int(theirs[2])) / 24.0
+        return Point((p + v * apart for p, v in zip(self.tf.pos, d)),
+                     self.axis)
+
+
+def _rest_on(part, m, pos, on, side):
+    """`pos` slid along `side` until the part's face meets the face of `on`."""
+    d = _direction(side)
+    k, sign = _axis_of(d)
+    if isinstance(on, (int, float)):
+        target = float(on)
+    else:
+        refs = [on] if isinstance(on, Ref) else list(on)
+        if not refs or not all(isinstance(r, Ref) for r in refs):
+            raise SpecError("on= takes a placed part (what s.add returns), "
+                            "a list of them, or a coordinate")
+        faces = [r.face(side) for r in refs]
+        target = max(faces) if sign > 0 else min(faces)
+    box = joints.union([joints.world_box(Transform(m, pos), b)
+                        for b in joints.local_boxes(part)])
+    shift = target - (box[k] if sign > 0 else box[k + 3])
+    out = list(pos)
+    out[k] = _clean(out[k] + shift)
+    return tuple(out)
+
+
+class Instance:
+    """
+    One copy of an assembly, as `place()` returns it.  Call it with a Ref
+    made inside the assembly to get that part where this copy landed:
+
+        left = b.place(side_frame, at=(0, 6, 0))
+        left(rail).face("-y")          # the rail's inside face, in b's terms
+        left(brackets)                 # a list maps to a list
+        left(rail.hole(3))             # so does a Point
+
+    A Ref from an assembly nested inside this one goes through that
+    assembly's own `place()` result first.
+    """
+
+    def __init__(self, assembly, outer):
+        self.assembly = assembly
+        self.outer = outer
+
+    def __call__(self, item):
+        if isinstance(item, Ref):
+            if not any(name == item.name and p.tf == item.tf
+                       for s in self.assembly.steps
+                       for p, name, _, _ in s.items):
+                raise SpecError(
+                    f"{item!r} is not a part of {self._what()} - a Ref from "
+                    f"an assembly nested inside it goes through that "
+                    f"assembly's place() result first")
+            return Ref(item.name, item.tf.then(self.outer))
+        if isinstance(item, Point):
+            return Point(self.outer.point(item),
+                         None if item.axis is None
+                         else self.outer.direction(item.axis))
+        if isinstance(item, (list, tuple)):
+            return [self(i) for i in item]
+        raise SpecError(f"an assembly copy maps Refs, Points and lists of "
+                        f"them, not {type(item).__name__}")
+
+    def _what(self):
+        name = getattr(self.assembly, "name", "")
+        return f"assembly {name!r}" if name else "this assembly"
 
 
 @dataclass
@@ -124,13 +352,20 @@ class Step:
 
     def add(self, part, at=(0.0, 0.0, 0.0), rot=None, axis=None, color=None,
             qty=1, arrow=None, mirror=None, group=None, pull=None,
-            temp=False):
+            temp=False, on=None, side="+z"):
         """
-        Place a part.
+        Place a part, and return a `Ref` to it.
 
-        at     hole coordinates of the part's first hole
+        at     hole coordinates of the part's first hole.  A Point from
+               `ref.hole()` also lines up a pin, shaft, gear, wheel, collar
+               or spacer with that hole, unless `axis` or `rot` says otherwise
         axis   'x' | 'y' | 'z' - reorients parts that are built along +z
                (pins, shafts, standoffs, gears, wheels, collars)
+        on     rest the part against another: a Ref, a list of Refs (the
+               highest wins), or a coordinate.  Its position along `side` is
+               worked out so its face meets theirs; `at` gives the rest
+        side   which way `on` stacks - '+z' (the default) sits on top,
+               '+y' presses against the +y face, and so on
         rot    extra rotation in degrees, applied X then Y then Z, after `axis`
         mirror 'x' | 'y' | 'z' - reflect the part, for the handed twin of a
                chiral part like a corner bracket.  Applied before `axis`
@@ -147,6 +382,10 @@ class Step:
         temp   drawn in this step only - a string lying loose, which a
                later step draws hung - and left out of the finished model
         """
+        hole_axis = getattr(at, "axis", None)
+        if (axis is None and rot is None and hole_axis is not None
+                and joints.is_axial(part)):
+            axis = "xyz"[_axis_of(hole_axis)[0]]
         m = _orient(rot, axis, mirror)
         if isinstance(part, Part):
             # A part made on the spot, like a cable's run: drawn, and
@@ -157,13 +396,16 @@ class Step:
                 resolved = get(part, color)
             except UnknownPart as e:
                 raise SpecError(str(e)) from None
+        pos = tuple(float(v) for v in at)
+        if on is not None:
+            pos = _rest_on(part, m, pos, on, side)
+        tf = Transform(m, pos)
         self.items.append(
-            (Placement(resolved, Transform(m, tuple(float(v) for v in at)),
-                       arrow=arrow_dir(arrow), group=group, pull=pull,
-                       temp=temp),
+            (Placement(resolved, tf, arrow=arrow_dir(arrow), group=group,
+                       pull=pull, temp=temp),
              part, color, qty)
         )
-        return self
+        return Ref(part, tf)
 
     def include(self, assembly, at=(0.0, 0.0, 0.0), rot=None, mirror=None,
                 arrow=None):
@@ -188,10 +430,8 @@ class Step:
         return self
 
     def many(self, part, positions, **kw):
-        """Place the same part at several coordinates."""
-        for at in positions:
-            self.add(part, at, **kw)
-        return self
+        """Place the same part at several coordinates; a list of Refs."""
+        return [self.add(part, at, **kw) for at in positions]
 
     # `with b.step(...) as s:` is just sugar; the object is usable either way.
     def __enter__(self):
@@ -289,6 +529,9 @@ class _Steps:
         The assembly's steps keep their own notes, captions and camera angles;
         only their coordinates move.  Assemblies nest: an arm made of two
         link modules places them the same way a build places the arm.
+
+        Returns an `Instance`: call it with a Ref made inside the assembly
+        to get that part where this copy landed - `left(rail).face("-y")`.
         """
         outer = Transform(_orient(rot, mirror=mirror),
                           tuple(float(v) for v in at))
@@ -321,7 +564,7 @@ class _Steps:
             s.module = (assembly.name or "The module",
                         [Placement(p.part, p.tf.then(Transform(outer.rot)))
                          for p in assembly.all_placements()])
-            return self
+            return Instance(assembly, outer)
 
         for k, src in enumerate(assembly.steps):
             s = self.step(note=src.note, view_rz=src.view_rz,
@@ -333,7 +576,7 @@ class _Steps:
                 s.module = (src.module[0],
                             [Placement(p.part, p.tf.then(Transform(outer.rot)))
                              for p in src.module[1]])
-        return self
+        return Instance(assembly, outer)
 
     def inventory(self):
         total = Counter()

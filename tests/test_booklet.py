@@ -108,6 +108,7 @@ class TestStructure(unittest.TestCase):
             self.assertIn(f'id="step-{n}"', self.html)
 
 
+
 class TestOrientation(unittest.TestCase):
     def setUp(self):
         self.html = booklet(_sample())
@@ -132,6 +133,7 @@ class TestOrientation(unittest.TestCase):
                 s.add("beam_1x4", (0, 0, 0), arrow=True)
             with self.subTest(style=style):
                 self.assertEqual(_parse(booklet(b)).mismatched, [])
+
 
 
 class TestAccessibility(unittest.TestCase):
@@ -210,7 +212,7 @@ class TestExamples(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        parts.set_detail("cad")
+        parts.set_detail(parts.DEFAULT_DETAIL)
 
     def test_every_shipped_example_renders_and_parses(self):
         for name in support.example_names():

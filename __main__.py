@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import pathlib
 import shutil
 import subprocess
@@ -93,7 +94,8 @@ def main(argv=None):
                     help="also rasterise each step to .png (needs rsvg-convert)")
     ap.add_argument("--no-hero", action="store_true",
                     help="skip the finished-model image on the cover")
-    ap.add_argument("--detail", choices=parts.DETAIL_LEVELS, default="cad",
+    ap.add_argument("--detail", choices=parts.DETAIL_LEVELS,
+                    default=parts.DEFAULT_DETAIL,
                     help="geometry detail: 'cad' uses the bundled official VEX "
                          "meshes (default), 'simple' the procedural shapes, for "
                          "a file about a quarter the size")
@@ -108,6 +110,25 @@ def main(argv=None):
                     help="treat any problem the checks find as an error")
     ap.add_argument("--check-only", action="store_true",
                     help="run the checks and report, without drawing anything")
+    ap.add_argument("--views", metavar="DIR", type=pathlib.Path,
+                    help="write the finished model from the top, bottom, "
+                         "each side and the corner, with hole-number rulers, "
+                         "as SVG (and PNG with rsvg-convert)")
+    ap.add_argument("--sheet", metavar="FILE", type=pathlib.Path,
+                    help="write every step and four views on one page, "
+                         ".svg or .png")
+    ap.add_argument("--inspect", action="store_true",
+                    help="print the finished build as JSON - every part's "
+                         "position, box and holes, what is joined to what, "
+                         "and the problems - without drawing anything")
+    ap.add_argument("--at", metavar="X,Y,Z",
+                    help="with --inspect: also report the parts and holes "
+                         "at this point")
+    ap.add_argument("--parts", action="store_true",
+                    help="print every part family as JSON and exit")
+    ap.add_argument("--part", metavar="NAME",
+                    help="print one part's envelope, holes and axis as JSON, "
+                         "in its own coordinates, and exit")
     ap.add_argument("--gui", action="store_true",
                     help="open the desktop interface")
     args = ap.parse_args(argv)
@@ -130,13 +151,43 @@ def main(argv=None):
             raise SystemExit(f"{args.new}: already exists; nothing changed")
         print(f"Created {args.new}\nNext: iqdraw {args.new}")
         return
+    if args.parts or args.part:
+        from .report import catalogue, part_info
+        parts.set_detail("simple")
+        try:
+            data = catalogue() if args.parts else part_info(args.part)
+        except parts.UnknownPart as e:
+            raise SystemExit(str(e)) from None
+        json.dump(data, sys.stdout, indent=1)
+        print()
+        return
     if args.spec is None:
         ap.error("a build spec is required (or use --new FILE)")
+    if args.no_check and args.strict:
+        ap.error("--strict cannot be used with --no-check")
+    if args.no_check and args.check_only:
+        ap.error("--check-only cannot be used with --no-check")
+    at = None
+    if args.at is not None:
+        if not args.inspect:
+            ap.error("--at needs --inspect")
+        try:
+            at = tuple(float(v) for v in args.at.split(","))
+        except ValueError:
+            at = ()
+        if len(at) != 3:
+            ap.error(f"--at wants three numbers like 3,0,0.25, got {args.at!r}")
 
     parts.set_detail(args.detail)
     build = load_build(args.spec)
     if args.context_detail:
         build.context_detail = args.context_detail
+
+    if args.inspect:
+        from .report import report
+        json.dump(report(build, at), sys.stdout, indent=1)
+        print()
+        return
 
     if not args.no_check:
         problems = check(build)
@@ -149,6 +200,14 @@ def main(argv=None):
     if args.check_only:
         return
 
+    if args.views or args.sheet:
+        _write_views(build, args.views, args.sheet)
+        # Views and sheets are for checking a spec, and a robot-sized
+        # booklet takes far longer to draw - so it is only written when
+        # asked for by name.
+        if not (args.out or args.svg_dir or args.png):
+            return
+
     out = args.out or args.spec.with_suffix(".html")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(booklet(build, hero=not args.no_hero), encoding="utf-8")
@@ -158,22 +217,68 @@ def main(argv=None):
     if args.svg_dir or args.png:
         d = args.svg_dir or out.parent / f"{out.stem}-steps"
         d.mkdir(parents=True, exist_ok=True)
+        rasterizer = shutil.which("rsvg-convert") if args.png else None
+        if args.png and not rasterizer:
+            print("rsvg-convert not found; SVG files will be created but PNG "
+                  "files will be skipped", file=sys.stderr)
+        generated_svgs = set()
+        generated_pngs = set()
         for number, _step, svg in build.step_svgs():
             f = d / f"step-{number:02d}.svg"
             f.write_text(svg, encoding="utf-8")
-            if args.png:
-                _rasterise(f)
-        print(f"{d}/  ({len(build.steps)} files)")
+            generated_svgs.add(f.name)
+            if rasterizer:
+                png = _rasterise(f, rasterizer)
+                generated_pngs.add(png.name)
+        _remove_stale_step_files(d, ".svg", generated_svgs)
+        if args.png:
+            # Old raster files are worse than no raster files: they can show a
+            # step that no longer exists or an earlier version of the build.
+            _remove_stale_step_files(d, ".png", generated_pngs)
+        file_count = len(generated_svgs) + len(generated_pngs)
+        print(f"{d}/  ({file_count} files)")
 
 
-def _rasterise(svg_path: pathlib.Path):
+def _write_views(build, views_dir, sheet):
+    from . import views
     tool = shutil.which("rsvg-convert")
-    if not tool:
-        print("rsvg-convert not found; skipping PNG", file=sys.stderr)
-        return
+    if views_dir:
+        views_dir.mkdir(parents=True, exist_ok=True)
+        for name in views.VIEWS:
+            f = views_dir / f"view-{name}.svg"
+            f.write_text(views.view_svg(build, name), encoding="utf-8")
+            if tool:
+                _rasterise(f, tool)
+        print(f"{views_dir}/  ({len(views.VIEWS)} views"
+              + ("" if tool else ", SVG only: rsvg-convert not found") + ")")
+    if sheet:
+        sheet.parent.mkdir(parents=True, exist_ok=True)
+        if sheet.suffix.lower() == ".png":
+            if not tool:
+                raise SystemExit("--sheet .png needs rsvg-convert; "
+                                 "use a .svg file instead")
+            svg = views.sheet_svg(build, rasterizer=tool)
+            subprocess.run([tool, "-b", "white", "-o", str(sheet)],
+                           input=svg, text=True, check=True)
+        else:
+            sheet.write_text(views.sheet_svg(build), encoding="utf-8")
+        print(sheet)
+
+
+def _rasterise(svg_path: pathlib.Path, tool: str) -> pathlib.Path:
     png = svg_path.with_suffix(".png")
     subprocess.run([tool, "-b", "white", "-o", str(png), str(svg_path)],
                    check=True)
+    return png
+
+
+def _remove_stale_step_files(directory: pathlib.Path, suffix: str,
+                             keep: set[str]) -> None:
+    """Remove only IQDraw-numbered files left by an earlier, longer build."""
+    for path in directory.glob(f"step-*{suffix}"):
+        number = path.stem.removeprefix("step-")
+        if number.isdigit() and path.name not in keep:
+            path.unlink()
 
 
 if __name__ == "__main__":

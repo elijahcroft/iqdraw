@@ -8,9 +8,15 @@ pitch radius is teeth/24 holes:
     12T + 36T  ->  0.5 + 1.5 = 2 holes apart
     36T + 60T  ->  1.5 + 2.5 = 4 holes apart
 
-which is why the shafts sit at holes 0, 2 and 6.  Turn the crank once and the
+which is why the shafts sit at holes 0, 2 and 6.  Turn the knob once and the
 60-tooth gear turns a fifth of a revolution: a 5:1 reduction the students can
 count tooth by tooth.
+
+The knob is a small wheel rather than a beam crank on purpose.  A beam's holes
+are round, so a shaft spins freely inside one - a beam crank would turn on its
+own and leave the gears where they are.  The wheel's centre is square, so it
+locks to the shaft and drives it (`iqdraw --inspect` reports that joint as
+"locked").
 
 Coordinates here are 0-BASED.  "Hole 2" in this file is the third hole a
 student counts along the beam.
@@ -23,17 +29,17 @@ from iqdraw import Build
 SPACER_Z = 0.375  # 0.25x spacer sits on the beam's top face
 GEAR_Z = 0.75     # 0.5x-thick gear lands on the spacer
 COLLAR_Z = 1.18   # locks down on the gear's top face
-CRANK_Z = 1.61    # underside lands on top of the collar
+KNOB_Z = 1.95     # the 100 mm wheel's hub lands on top of the collar
 
 SHAFTS = [(0, "gear_12"), (2, "gear_36"), (6, "gear_60")]
 
 b = Build(
     "Gear Ratio Demonstrator",
     subtitle="VEX IQ (2nd gen) - 12T / 36T / 60T train",
-    intro="A hand-cranked three-gear train. Count the teeth, turn the crank, "
+    intro="A hand-turned three-gear train. Count the teeth, turn the knob, "
           "and work out how far the big gear moves for one turn of the small "
           "one. Build time is about 15 minutes.",
-    done="turning the crank turns all three gears, with no free play",
+    done="turning the knob turns all three gears, with no free play",
     scale=40,
 )
 
@@ -59,9 +65,8 @@ with b.step("Lock a collar onto each shaft above the gear.") as s:
     s.many("collar", [(x, 0, COLLAR_Z) for x, _ in SHAFTS], axis="z",
            arrow=True)
 
-with b.step("Finish with a crank arm on the 12-tooth shaft, and a standoff "
-            "through its far end for a handle.",
-            caption="The arm points out to the side so it swings clear of the "
-                    "other two gears.") as s:
-    s.add("beam_1x4", (0, 0, CRANK_Z), rot=(0, 0, 90))
-    s.add("standoff_2", (0, 3, CRANK_Z + 0.25), axis="z")
+with b.step("Finish with a small wheel on top of the 12-tooth shaft. This is "
+            "the knob you turn.",
+            caption="Its square centre locks onto the shaft, so turning the "
+                    "wheel turns the gear.") as s:
+    s.add("wheel_100", (0, 0, KNOB_Z), axis="z", arrow=True)

@@ -230,7 +230,7 @@ def _blur(a, r):
 
 
 # (x, y, z) -> (screen x, screen y, depth), all in pitch; see geom.project
-_TO_SCREEN = ((math.sqrt(3) / 2, -math.sqrt(3) / 2, 0.0),
+_TO_SCREEN = ((-math.sqrt(3) / 2, math.sqrt(3) / 2, 0.0),
               (0.5, 0.5, -1.0),
               (1.0, 1.0, 1.0))
 

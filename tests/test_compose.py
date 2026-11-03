@@ -316,10 +316,12 @@ class TestTurn(unittest.TestCase):
         b.turn(rot=(180, 0, 0), at=(0, 0, 5), note="Turn it over.")
         with b.step("b") as s:
             s.add("beam_1x4", (0, 0, 4.5))
+            # Into both beams only once beam one has been turned up to z=5.
+            s.add("pin_1x1", (0, 0, 4.75), axis="z")
         return b
 
     def test_parts_built_before_a_turn_move_with_it(self):
-        first, second = self._turned().all_placements()
+        first, second, _pin = self._turned().all_placements()
         self.assertEqual(first.tf.pos, (0.0, 0.0, 5.0))
         self.assertEqual(second.tf.pos, (0.0, 0.0, 4.5))
 

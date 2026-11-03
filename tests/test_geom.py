@@ -6,9 +6,9 @@ import unittest
 import support  # noqa: F401  (puts iqdraw on the path)
 
 from iqdraw.geom import (
-    IDENTITY, PITCH_MM, Transform, box, centroid, euler, extrude, fade,
-    hex_to_rgb, mat_apply, mix_color, polygon_normal, project, rgb_to_hex,
-    rot_z, scale_color, vadd, vcross, vdot, vlen, vnorm, vsub,
+    IDENTITY, PITCH_MM, Transform, box, centroid, depth, det, euler, extrude,
+    fade, hex_to_rgb, mat_apply, mix_color, polygon_normal, project,
+    rgb_to_hex, rot_z, scale_color, vadd, vcross, vdot, vlen, vnorm, vsub,
 )
 
 
@@ -71,8 +71,18 @@ class TestProjection(unittest.TestCase):
         self.assertLess(project((0, 0, 1))[1], project((0, 0, 0))[1])
 
     def test_x_and_y_separate_horizontally(self):
-        self.assertGreater(project((1, 0, 0))[0], 0)
-        self.assertLess(project((0, 1, 0))[0], 0)
+        # A camera out at (1, 1, 1) looking back: +x to the left, +y right.
+        self.assertLess(project((1, 0, 0))[0], 0)
+        self.assertGreater(project((0, 1, 0))[0], 0)
+
+    def test_the_drawing_is_not_a_mirror_image(self):
+        # Screen right, screen up and toward the camera have to be a
+        # right-handed frame, as they are for any real camera.  A projection
+        # that draws the reflection of the model fails this whatever its
+        # angles, and every handed part in it comes out the wrong hand.
+        cols = [(project(e)[0], -project(e)[1], depth(e))
+                for e in ((1, 0, 0), (0, 1, 0), (0, 0, 1))]
+        self.assertGreater(det(tuple(zip(*cols))), 0)
 
     def test_isometric_axes_are_equally_foreshortened(self):
         origin = project((0, 0, 0))

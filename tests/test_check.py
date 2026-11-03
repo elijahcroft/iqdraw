@@ -13,8 +13,17 @@ from iqdraw import Build
 from iqdraw.check import check
 
 
+def _problems(build):
+    """
+    Everything but `loose`.  Most builds here are sketches of one mistake -
+    gears with no shaft, beams with no pins - and a finished build would have
+    those; `loose` has its own tests below.
+    """
+    return [p for p in check(build) if p.kind != "loose"]
+
+
 def _kinds(build):
-    return sorted(p.kind for p in check(build))
+    return sorted(p.kind for p in _problems(build))
 
 
 class TestQuietOnValidBuilds(unittest.TestCase):
@@ -43,7 +52,7 @@ class TestQuietOnValidBuilds(unittest.TestCase):
         with b.step("s") as s:
             s.add("beam_2x12", (0, 0, 0))
             s.add("beam_1x7", (1, 0, 0.5), rot=(0, 0, 90))
-        self.assertEqual(check(b), [])
+        self.assertEqual(_kinds(b), [])
 
     def test_turned_beams_touching_end_to_end_are_fine(self):
         # Their bounding boxes overlap; the beams do not.
@@ -51,7 +60,7 @@ class TestQuietOnValidBuilds(unittest.TestCase):
         with b.step("s") as s:
             s.add("beam_1x4", (0, 0, 0), rot=(0, 0, 35))
             s.add("beam_1x4", (2.37, 2.72, 0), rot=(0, 0, 95))
-        self.assertEqual(check(b), [])
+        self.assertEqual(_problems(b), [])
 
     def test_a_compound_gear_pair_on_one_shaft_is_fine(self):
         b = Build("compound")
@@ -60,7 +69,7 @@ class TestQuietOnValidBuilds(unittest.TestCase):
             s.add("shaft_4", (0, 0, 0), axis="z")
             s.add("gear_12", (0, 0, 0.6), axis="z")
             s.add("gear_36", (0, 0, 1.2), axis="z")
-        self.assertEqual(check(b), [])
+        self.assertEqual(_kinds(b), [])
 
     def test_an_idler_row_does_not_flag_the_outer_pair(self):
         # Three gears in a line: the ends are further apart than their own
@@ -70,7 +79,7 @@ class TestQuietOnValidBuilds(unittest.TestCase):
             s.add("beam_2x12", (0, 0, 0))
             for x in (0, 1, 2):
                 s.add("gear_12", (x, 0, 0.75), axis="z")
-        self.assertEqual(check(b), [])
+        self.assertEqual(_kinds(b), [])
 
     def test_gears_far_apart_are_two_gears_not_a_bad_pair(self):
         b = Build("separate")
@@ -123,16 +132,125 @@ class TestCatchesRealMistakes(unittest.TestCase):
         b = Build("late")
         b.step("fine").add("beam_2x12", (0, 0, 0))
         b.step("wrong").add("beam_1x4", (40, 0, 0))
-        self.assertEqual([p.step for p in check(b)], [2])
+        self.assertEqual([p.step for p in _problems(b)], [2])
 
     def test_a_problem_reads_as_a_sentence(self):
         b = Build("adrift")
         with b.step("s") as s:
             s.add("beam_2x12", (0, 0, 0))
             s.add("beam_1x4", (30, 0, 0))
-        text = str(check(b)[0])
+        text = str(_problems(b)[0])
         self.assertIn("step 1", text)
         self.assertIn("beam_1x4", text)
+
+
+
+class TestJammed(unittest.TestCase):
+    def test_three_gears_meshing_in_a_ring_jam(self):
+        b = Build("x")
+        with b.step() as s:
+            for at in ((0, 0, 0), (1, 0, 0), (0.5, 0.8660254, 0)):
+                s.add("gear_12", at, axis="z")
+        found = [p for p in _problems(b) if p.kind == "jammed"]
+        self.assertEqual(len(found), 1)
+        self.assertIn("3 gears", found[0].message)
+
+    def test_two_shafts_joined_by_two_different_ratios_jam(self):
+        b = Build("x")
+        with b.step() as s:
+            beam = s.add("beam_1x4", (0, 0, 0))
+            for x, low, high in ((0, "gear_12", "gear_36"),
+                                 (2, "gear_36", "gear_12")):
+                s.add("shaft_4", beam.hole(x))
+                s.add(low, beam.hole(x) + (0, 0, 0.5))
+                s.add(high, beam.hole(x) + (0, 0, 1.0))
+        self.assertIn("jammed", _kinds(b))
+
+    def test_a_plain_train_and_an_idler_do_not_jam(self):
+        b = Build("x")
+        with b.step() as s:
+            g = s.add("gear_12", (0, 0, 0), axis="z")
+            idler = s.add("gear_36", g.meshing("gear_36", "+x"))
+            s.add("gear_12", idler.meshing("gear_12", "+x"))
+        self.assertNotIn("jammed", _kinds(b))
+
+
+class TestJoints(unittest.TestCase):
+    """The joint rules, which read holes and rods rather than boxes."""
+
+    def _base(self):
+        b = Build("j")
+        return b, b.step("s")
+
+    def test_a_pin_joining_two_beams_is_fine(self):
+        b, s = self._base()
+        s.add("beam_2x12", (0, 0, 0))
+        s.add("beam_1x4", (0, 0, 0.5))
+        s.add("pin_1x1", (0, 0, 0.25), axis="z")
+        self.assertEqual(check(b), [])
+
+    def test_a_shaft_through_holes_carrying_a_stack_is_fine(self):
+        b, s = self._base()
+        s.add("beam_2x12", (0, 0, 0))
+        s.add("shaft_3", (0, 0, 0), axis="z")
+        s.add("spacer", (0, 0, 0.375), axis="z")
+        s.add("gear_12", (0, 0, 0.75), axis="z")
+        s.add("collar", (0, 0, 1.18), axis="z")
+        self.assertEqual(check(b), [])
+
+    def test_a_shaft_half_a_hole_out_runs_through_solid(self):
+        b, s = self._base()
+        s.add("beam_2x12", (0, 0, 0))
+        s.add("shaft_3", (2.5, 0, 0), axis="z")
+        problems = check(b)
+        self.assertEqual([p.kind for p in problems], ["rod in solid"])
+        self.assertIn("nearest hole", problems[0].message)
+
+    def test_a_shaft_through_the_edge_of_a_flat_beam(self):
+        b, s = self._base()
+        s.add("beam_2x12", (0, 0, 0))
+        s.add("shaft_4", (1, 0, 0), axis="y")
+        self.assertEqual([p.kind for p in check(b)], ["rod in solid"])
+
+    def test_a_pin_in_only_one_part_holds_nothing(self):
+        b, s = self._base()
+        s.add("beam_2x12", (0, 0, 0))
+        s.add("beam_1x4", (0, 0, 0.5))
+        s.add("pin_1x1", (0, 0, 0.25), axis="z")
+        s.add("pin_1x1", (5, 0, 0.25), axis="z")
+        problems = check(b)
+        self.assertEqual([p.kind for p in problems], ["loose"])
+        self.assertIn("pin_1x1 at (5, 0, 0.25)", problems[0].message)
+
+    def test_a_beam_nothing_pins_on(self):
+        b, s = self._base()
+        s.add("beam_2x12", (0, 0, 0))
+        s.add("beam_1x4", (0, 0, 0.5))
+        self.assertEqual([p.kind for p in check(b)], ["loose", "loose"])
+
+    def test_a_gear_overlapping_its_spacer(self):
+        b, s = self._base()
+        s.add("beam_2x12", (0, 0, 0))
+        s.add("shaft_3", (0, 0, 0), axis="z")
+        s.add("spacer", (0, 0, 0.375), axis="z")
+        s.add("gear_12", (0, 0, 0.6), axis="z")
+        self.assertEqual([p.kind for p in check(b)], ["collision"])
+
+    def test_a_wheel_rubbing_the_rail(self):
+        b, s = self._base()
+        s.add("beam_1x8", (0, 0, 0), rot=(90, 0, 0))   # on edge: holes face y
+        s.add("shaft_4", (1, 0, 0), axis="y")
+        s.add("wheel_200", (1, 0.5, 0), axis="y")
+        s.add("collar", (1, 1.6, 0), axis="y")
+        self.assertIn("collision", [p.kind for p in check(b)])
+
+    def test_a_wheel_clear_of_the_rail_is_fine(self):
+        b, s = self._base()
+        s.add("beam_1x8", (0, 0, 0), rot=(90, 0, 0))
+        s.add("shaft_4", (1, 0, 0), axis="y")
+        s.add("wheel_200", (1, 0.95, 0), axis="y")
+        s.add("collar", (1, 1.81, 0), axis="y")
+        self.assertEqual(check(b), [])
 
 
 if __name__ == "__main__":

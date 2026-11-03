@@ -27,7 +27,19 @@ import math
 import re
 from dataclasses import dataclass
 
-from .cadmesh import cad_mesh, gear_mesh
+try:
+    # The official meshes ship in cadmesh.py.  Every part also has a
+    # procedural form, so the package still draws everything without it.
+    from .cadmesh import cad_mesh, gear_mesh
+    HAS_CAD_MESHES = True
+except ImportError:
+    HAS_CAD_MESHES = False
+
+    def cad_mesh(_key, _color):
+        return None
+
+    def gear_mesh(_key, _color):
+        return None
 from .geom import (
     Disc, Facet, Transform, along, attach, box, circle_profile, cylinder,
     euler, extrude, gear_profile, mix_color, moved, rounded_rect, scale_color,
@@ -52,6 +64,34 @@ STANDOFF_W = 0.46        # standoff across the flats
 CORNER_R = 0.50          # the rounded end of a beam == half a pitch
 EDGE_BEVEL = 0.055       # molded chamfer around structural-part faces
 HOLE_BEVEL = 0.055       # countersink around each structural hole
+#
+# Molded face relief.  An injection-molded VEX face is not one plane: a
+# perimeter rim and a raised pad around every hole stand proud of a general
+# face, and the material between the holes is recessed below it.  Measured
+# from the mid-plane of a 0.50-pitch beam those three levels sit at 0.24,
+# 0.18 and 0.079, which is what these fractions of the half-thickness come
+# to.  Fractions rather than absolute depths so a 0.25-thick plate gets the
+# same relief in proportion instead of one deeper than the plate itself.
+RIM_LEVEL = 0.96         # perimeter rim, and the pad around each hole
+FACE_LEVEL = 0.72        # the general face between those features
+POCKET_LEVEL = 0.316     # the pockets recessed between the holes
+RIM_W = 0.06             # width of the flat perimeter rim
+RIM_DRAFT = 0.025        # horizontal run of the wall under the rim
+# Where each face level starts, as a fraction of the distance from the pad
+# around a hole out to the edge of that hole's cell.  Fractions again, so a
+# cell squeezed narrow by the rim keeps every level rather than losing the
+# ones that no longer fit.
+PAD_S = 0.14             # pad wall gives way to the general face
+FACE_S = 0.58            # general face gives way to the pocket
+#
+# Gear face relief, measured from the gear's mid-plane: the toothed rim and
+# the hub stand at the full half-thickness, the spokes between neighbouring
+# lightening holes at 0.18, and the web the holes are cut through at 0.079.
+GEAR_T = 0.50            # gear thickness
+GEAR_SPOKE_Z = 0.18      # top of the spokes between lightening holes
+GEAR_WEB_Z = 0.079       # the recessed web between rim and hub
+GEAR_RIM_W = 0.16        # flat of the toothed rim inside the tooth roots
+GEAR_RAYS = 12           # spokes each hole's web cell is sampled on
 # ============================================================================
 
 # Colours.  Structural plastic is drawn the light grey VEX's own build guides
@@ -192,57 +232,97 @@ class Part:
 # ------------------------------------------------------------------ internals
 
 
-CELL_PTS = 12  # boundary points per hole cell; also the hole's polygon count
+# Boundary points per hole cell, which is also the hole's own polygon count.
+# Must be a multiple of 8: cells are sampled on evenly spaced rays from their
+# hole, and a cell corner has to fall on one of those rays or the four cells
+# meeting there each chord it off and leave a gap.  16 is what stops a hole
+# reading as a socket rather than a hole; 24 rounds it further and widens the
+# pockets, at roughly another 40% on a booklet for a difference that does not
+# survive being printed at a booklet's 38px per hole.
+CELL_PTS = 16
 
 
-def _resample(profile, target):
-    """Split the longest edges until the outline has at least `target` points."""
-    pts = list(profile)
-    while len(pts) < target:
-        k = max(range(len(pts)),
-                key=lambda i: math.dist(pts[i], pts[(i + 1) % len(pts)]))
-        a, b = pts[k], pts[(k + 1) % len(pts)]
-        pts.insert(k + 1, ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2))
-    return pts
+def _cell_ring(cell, cx, cy, n):
+    """`cell`'s outline sampled on `n` evenly spaced rays from (cx, cy).
 
+    Sampling by angle rather than along the outline is what lets two
+    neighbouring cells agree, point for point, on the boundary they share:
+    the angle set is symmetric, so the ray from one hole and the ray from the
+    next land on the same spot of the edge between them.  Cells that
+    disagreed there would crack open as soon as the two sides of that edge
+    sat at different heights, which is exactly what a rib does to it.
 
-def _annulus(profile, cx, cy, r, z, up, color):
+    It also puts the ring on the same angles as `circle_profile`, so the pad
+    around a hole meets its counterbore with no seam.
+
+    Corners the rays happen to miss are kept as well: a chord across one
+    would cut the cell short of its neighbour and open a gap in the face.
     """
-    The face of one hole cell: the material between a circular void at
-    (cx, cy) and the cell's outline, as a ring of quads.
-
-    A hole has to be a real void, not a dark circle painted on a solid face.
-    Under a depth sort, a solid face covering the hole would be one facet
-    centred on the hole itself, and anything pushed through that hole - a pin,
-    a shaft - sits nearer the camera than that centre and gets drawn on top of
-    the beam it is buried in.  Ringing the void with quads puts real geometry
-    on the near side of the hole, which is what hides the buried shaft.
-    """
-    out = []
-    n = len(profile)
+    found = []
+    m = len(cell)
     for k in range(n):
-        ax, ay = profile[k]
-        bx, by = profile[(k + 1) % n]
-        aa = math.atan2(ay - cy, ax - cx)
-        ab = math.atan2(by - cy, bx - cx)
-        ia = (cx + r * math.cos(aa), cy + r * math.sin(aa))
-        ib = (cx + r * math.cos(ab), cy + r * math.sin(ab))
-        pts = [(ia[0], ia[1], z), (ax, ay, z), (bx, by, z), (ib[0], ib[1], z)]
-        if up < 0:
-            pts.reverse()
-        out.append(Facet(pts, color, (0.0, 0.0, float(up))))
+        a = 2 * math.pi * k / n
+        dx, dy = math.cos(a), math.sin(a)
+        for e in range(m):
+            x0, y0 = cell[e]
+            ex = cell[(e + 1) % m][0] - x0
+            ey = cell[(e + 1) % m][1] - y0
+            den = dx * ey - dy * ex
+            if abs(den) < 1e-12:
+                continue
+            t = ((x0 - cx) * ey - (y0 - cy) * ex) / den
+            u = ((x0 - cx) * dy - (y0 - cy) * dx) / den
+            if t > 0.0 and -1e-9 <= u <= 1.0 + 1e-9:
+                found.append((a, (cx + dx * t, cy + dy * t)))
+                break
+    for x, y in cell:
+        found.append((math.atan2(y - cy, x - cx) % (2 * math.pi), (x, y)))
+    found.sort(key=lambda p: p[0])
+    out = []
+    for a, pt in found:
+        if not out or a - out[-1][0] > 1e-9:
+            out.append((a, pt))
+    return [pt for _a, pt in out]
+
+
+def _rib_spokes(ring, i, j, drilled):
+    """Which points of cell (i, j)'s ring carry a rib to a neighbouring hole.
+
+    A real part does not ring each hole with a moat: the pads are joined to
+    their neighbours by ribs at the level of the general face, and it is the
+    gaps left between those ribs that are recessed.  A rib runs one spoke
+    either side of the line between the two holes it joins - the narrowest
+    that still gives it a flat top rather than a single ridge line.
+    """
+    span = 2 * math.pi / CELL_PTS + 1e-9
+    axes = [(1, 0, 0.0), (0, 1, math.pi / 2),
+            (-1, 0, math.pi), (0, -1, 3 * math.pi / 2)]
+    out = []
+    for x, y in ring:
+        a = math.atan2(y - j, x - i)
+        out.append(any(
+            (i + di, j + dj) in drilled
+            and abs((a - axis + math.pi) % (2 * math.pi) - math.pi) <= span
+            for di, dj, axis in axes))
     return out
 
 
 def _loft_ring(lower, upper, z0, z1, color, inward=False):
-    """Join two equal-length profiles with a band of shaded quadrilaterals."""
+    """Join two equal-length profiles with a band of shaded quadrilaterals.
+
+    Each height is either one value for the whole ring or one value per
+    point, for a band that has to rise and fall as it goes round.
+    """
     out = []
     n = len(lower)
+    za = z0 if isinstance(z0, list) else [z0] * n
+    zb = z1 if isinstance(z1, list) else [z1] * n
     for k in range(n):
-        a0 = (*lower[k], z0)
-        b0 = (*lower[(k + 1) % n], z0)
-        b1 = (*upper[(k + 1) % n], z1)
-        a1 = (*upper[k], z1)
+        m = (k + 1) % n
+        a0 = (*lower[k], za[k])
+        b0 = (*lower[m], za[m])
+        b1 = (*upper[m], zb[m])
+        a1 = (*upper[k], zb[k])
         pts = [a0, b0, b1, a1]
         if inward:
             pts.reverse()
@@ -250,10 +330,14 @@ def _loft_ring(lower, upper, z0, z1, color, inward=False):
     return out
 
 
-def _hole_chamfer(cx, cy, outer_r, inner_r, z_face, z_bore, up, color):
-    """The small conical lead-in molded around a VEX structural hole."""
-    outer = circle_profile(outer_r, CELL_PTS, cx, cy)
-    inner = circle_profile(inner_r, CELL_PTS, cx, cy)
+def _hole_chamfer(ring, cx, cy, outer_r, inner_r, z_face, z_bore, up, color):
+    """The small conical lead-in molded around a VEX structural hole.
+
+    Cut on `ring`'s spokes, so it lands on the pad around the hole point for
+    point instead of leaving a seam the width of one chord.
+    """
+    outer = _pad_ring(ring, cx, cy, outer_r)
+    inner = _pad_ring(ring, cx, cy, inner_r)
     if up > 0:
         return _loft_ring(outer, inner, z_face, z_bore, color, inward=True)
     return _loft_ring(inner, outer, z_bore, z_face, color, inward=True)
@@ -272,7 +356,85 @@ def _cell_profile(i, j, w, length, inset):
         r if i == length - 1 and j == w - 1 else 0.0,
         r if i == 0 and j == w - 1 else 0.0,
     )
-    return rounded_rect(x0, y0, x1, y1, radii)
+    return rounded_rect(x0, y0, x1, y1, radii, CELL_PTS // 4)
+
+
+def _split_runs(outlines, cell=1.0):
+    """Cut every side longer than `cell` into equal pieces, the same way in
+    each of several concentric outlines so they still loft point for point.
+
+    A beam's rim is otherwise one strip down each long side, sorting by the
+    middle of the beam - so it paints across a gear sitting over one end.
+    """
+    first = outlines[0]
+    n = len(first)
+    counts = [max(1, math.ceil(math.dist(first[k], first[(k + 1) % n])
+                               / cell - 1e-9)) for k in range(n)]
+    out = []
+    for prof in outlines:
+        pts = []
+        for k in range(n):
+            (ax, ay), (bx, by) = prof[k], prof[(k + 1) % n]
+            m = counts[k]
+            pts += [(ax + (bx - ax) * s / m, ay + (by - ay) * s / m)
+                    for s in range(m)]
+        out.append(pts)
+    return out
+
+
+def _blend(inner, outer, s):
+    """A profile `s` of the way out from `inner` to `outer`, point for point."""
+    return [(a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s)
+            for a, b in zip(inner, outer)]
+
+
+def _pad_ring(profile, cx, cy, r):
+    """A circle of radius `r`, sampled along `profile`'s radial directions.
+
+    Every ring of a hole cell is cut on the same spokes, so the pad around
+    the hole meets the counterbore that lands on it point for point.
+    """
+    out = []
+    for x, y in profile:
+        a = math.atan2(y - cy, x - cx)
+        out.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return out
+
+
+def _relief_step(inner, outer, z_in, z_out, up, color):
+    """One step of face relief: the band between two concentric rings.
+
+    A hole has to be a real void, not a dark circle painted on a solid face.
+    Under a depth sort, a solid face covering the hole would be one facet
+    centred on the hole itself, and anything pushed through that hole - a
+    pin, a shaft - sits nearer the camera than that centre and gets drawn on
+    top of the beam it is buried in.  Ringing the void with bands puts real
+    geometry on the near side of the hole, which is what hides the buried
+    shaft, and it is why a face is built out of these rather than out of two
+    big polygons.
+
+    Wound so the band faces away from the mid-plane on whichever side `up`
+    names, which is what carries it through the back-face cull.
+    """
+    def flip(z):
+        return [-v for v in z] if isinstance(z, list) else -z
+
+    if up > 0:
+        return _loft_ring(outer, inner, z_out, z_in, color)
+    return _loft_ring(inner, outer, flip(z_in), flip(z_out), color)
+
+
+def _sink_color(band, deep, color):
+    """Recolour the quads of `band` that lie wholly on the pocket floor.
+
+    The sunk walls shade themselves off their own normals, but a pocket floor
+    is parallel to the face above it and would otherwise be the same grey -
+    and a booklet has to survive black-and-white printing.
+    """
+    for quad in band:
+        if all(abs(abs(q[2]) - deep) < 1e-9 for q in quad.pts):
+            quad.color = color
+    return band
 
 
 def _flat(w, length, t, color, holes=None):
@@ -291,15 +453,38 @@ def _flat(w, length, t, color, holes=None):
     }
     bore = mix_color(color, "#1b1f27", 0.66)
 
-    outer = rounded_rect(x0, y0, x1, y1, (CORNER_R,) * 4)
+    # Every outline here is cut on the same angular grid the hole cells are
+    # sampled on, so a cell's rounded end lands exactly on the rim that runs
+    # past it.
+    arc = CELL_PTS // 4
+    outer = rounded_rect(x0, y0, x1, y1, (CORNER_R,) * 4, arc)
     inset = rounded_rect(
         x0 + EDGE_BEVEL, y0 + EDGE_BEVEL,
         x1 - EDGE_BEVEL, y1 - EDGE_BEVEL,
-        (CORNER_R - EDGE_BEVEL,) * 4,
+        (CORNER_R - EDGE_BEVEL,) * 4, arc,
     )
+    brink = rounded_rect(
+        x0 + EDGE_BEVEL + RIM_W, y0 + EDGE_BEVEL + RIM_W,
+        x1 - EDGE_BEVEL - RIM_W, y1 - EDGE_BEVEL - RIM_W,
+        (CORNER_R - EDGE_BEVEL - RIM_W,) * 4, arc,
+    )
+    sill_in = EDGE_BEVEL + RIM_W + RIM_DRAFT
+    sill = rounded_rect(
+        x0 + sill_in, y0 + sill_in, x1 - sill_in, y1 - sill_in,
+        (CORNER_R - sill_in,) * 4, arc,
+    )
+    outer, inset, brink, sill = _split_runs([outer, inset, brink, sill])
     face = t / 2
     shoulder = face - EDGE_BEVEL
+    rim_z = face * RIM_LEVEL
+    gen_z = face * FACE_LEVEL
+    pocket_z = face * POCKET_LEVEL
     bevel_c = mix_color(color, "#ffffff", 0.09)
+    # Recessed surfaces are darkened as well as sunk.  The sunk walls shade
+    # themselves off their own normals, but a pocket floor is parallel to the
+    # face above it and would otherwise be the same grey - and a booklet has
+    # to survive black-and-white printing, where colour carries nothing.
+    recess_c = mix_color(color, "#11151b", 0.24)
 
     # A VEX beam is injection molded, not a square-edged slab.  Keep the
     # vertical wall slightly inboard of each face and bridge it with a narrow
@@ -309,8 +494,19 @@ def _flat(w, length, t, color, holes=None):
         outer, -shoulder, shoulder, color,
         cap_top=False, cap_bottom=False, rim_top=True, rim_bottom=True,
     )
-    prims += _loft_ring(outer, inset, shoulder, face, bevel_c)
-    prims += _loft_ring(inset, outer, -face, -shoulder, color)
+    prims += _loft_ring(outer, inset, shoulder, rim_z, bevel_c)
+    prims += _loft_ring(inset, outer, -rim_z, -shoulder, color)
+
+    # The rim runs right round the part at the highest level of the face, and
+    # drops from there to the pocket floor the hole cells are bounded by.
+    # Drawing it once around the whole outline, rather than as the outer edge
+    # of every cell, keeps the level along a shared cell boundary constant -
+    # cells resample their outlines independently, and a boundary whose height
+    # varied would crack open wherever two cells disagreed about where to
+    # sample it.
+    for up in (1, -1):
+        prims += _relief_step(brink, inset, rim_z, rim_z, up, color)
+        prims += _relief_step(sill, brink, pocket_z, rim_z, up, recess_c)
 
     # The pitch marks/notches along a genuine IQ beam's side are visible even
     # in VEX's simplified parts poster.  Subtle recessed rectangles make a
@@ -349,28 +545,49 @@ def _flat(w, length, t, color, holes=None):
 
     for i in range(length):
         for j in range(w):
-            cell = _cell_profile(i, j, w, length, EDGE_BEVEL)
+            cell = _cell_profile(i, j, w, length, sill_in)
 
             if (i, j) not in drilled:
-                prims.append(Facet([(x, y, t / 2) for x, y in cell], color,
-                                   (0.0, 0.0, 1.0)))
-                prims.append(Facet([(x, y, -t / 2) for x, y in reversed(cell)],
-                                   color, (0.0, 0.0, -1.0)))
+                # A blank cell has no pad to build the relief around, so it
+                # stays flat - at the pocket floor, which is the level every
+                # cell meets its neighbours and the rim at.
+                prims.append(Facet([(x, y, pocket_z) for x, y in cell],
+                                   recess_c, (0.0, 0.0, 1.0)))
+                prims.append(Facet([(x, y, -pocket_z) for x, y in
+                                    reversed(cell)],
+                                   recess_c, (0.0, 0.0, -1.0)))
                 continue
 
-            ring = _resample(cell, CELL_PTS)
+            ring = _cell_ring(cell, i, j, CELL_PTS)
             mouth_r = HOLE_R + HOLE_BEVEL
-            prims += _annulus(ring, i, j, mouth_r, face, +1, color)
-            prims += _annulus(ring, i, j, mouth_r, -face, -1, color)
-            prims += _hole_chamfer(i, j, mouth_r, HOLE_R, face, shoulder,
-                                   +1, bevel_c)
-            prims += _hole_chamfer(i, j, mouth_r, HOLE_R, -face, -shoulder,
-                                   -1, color)
+            # Three steps out from the hole: the wall of the pad the
+            # counterbore lands on, then the general face, then the cell's
+            # own edge.  How high that last step lands depends on the spoke -
+            # a rib carries the general face straight over to the next hole,
+            # and what is left between the ribs drops to the pocket floor.
+            # Every ring is cut on the cell's own spokes, so a cell the rim
+            # has squeezed narrow keeps all three levels rather than losing
+            # the ones that no longer fit.
+            pad = _pad_ring(ring, i, j, mouth_r)
+            shelf = _blend(pad, ring, PAD_S)
+            lip = _blend(pad, ring, FACE_S)
+            step_z = [gen_z if rib else pocket_z
+                      for rib in _rib_spokes(ring, i, j, drilled)]
+            for up in (1, -1):
+                prims += _relief_step(pad, shelf, rim_z, gen_z, up, color)
+                prims += _relief_step(shelf, lip, gen_z, step_z, up, color)
+                prims += _sink_color(
+                    _relief_step(lip, ring, step_z, step_z, up, color),
+                    pocket_z, recess_c)
+            prims += _hole_chamfer(ring, i, j, mouth_r, HOLE_R, rim_z,
+                                   shoulder, +1, bevel_c)
+            prims += _hole_chamfer(ring, i, j, mouth_r, HOLE_R, -rim_z,
+                                   -shoulder, -1, color)
             # Looking down a hole at this angle you see its far inner wall, so
             # the bore needs an inward-facing cylinder - a dark disc at the
             # bottom projects below the opening and never lines up with it.
             # Reversing the profile flips the wall normals to point inward.
-            disc = circle_profile(HOLE_R, 12, i, j)
+            disc = _pad_ring(ring, i, j, HOLE_R)
             prims += extrude(list(reversed(disc)), -shoulder, shoulder, bore,
                              cap_top=False, cap_bottom=False, edges=False,
                              zcell=t)  # too short to need banding
@@ -396,30 +613,6 @@ def _painted_hole(x, y, z, up, base):
         Disc((x, y, z), u, v, HOLE_R, mix_color(base, "#1b1f27", 0.66), n,
              stroke=True),
     ]
-
-
-def _attach_face_details(prims, details, up=1):
-    """Lift broad face markings clear of triangulated cap cells.
-
-    A gear face is divided into narrow radial facets for depth sorting.  A
-    round hole spans several of those facets, so attaching it to any one host
-    lets the neighbouring facets paint over it.  A hair of physical relief is
-    both true to the molded rim around the holes and keeps the complete detail
-    ahead of every coplanar cap cell.
-    """
-    caps = [p for p in prims
-            if isinstance(p, Facet) and p.normal[2] * up > 0.9]
-    if not caps:
-        return prims
-    zmax = max(f.pts[0][2] * up for f in caps)
-    dz = (zmax + 0.004) * up
-    for detail in details:
-        if isinstance(detail, Disc):
-            detail.center = (detail.center[0], detail.center[1], dz)
-        else:
-            detail.pts = [(x, y, dz) for x, y, _ in detail.pts]
-        prims.append(detail)
-    return prims
 
 
 def _annular_cylinder(outer_r, inner_r, z0, z1, color, segments=36):
@@ -502,16 +695,128 @@ def _gear_holes(teeth):
     return []
 
 
-def _gear_slot(angle, radius, length, width, z, color):
-    """A tangential molded slot used on the classic VEX IQ 60T gear."""
-    prof = rounded_rect(-length / 2, -width / 2,
-                        length / 2, width / 2,
+def _gear_slots(teeth):
+    """The tangential molded slots of the classic VEX IQ 60T gear.
+
+    Each sits midway between an inner and an outer lightening hole, so the
+    web keeps an even margin round all three.
+    """
+    if teeth < 60:
+        return []
+    length, width, radius = 0.72, 0.13, 1.33
+    prof = rounded_rect(-length / 2, -width / 2, length / 2, width / 2,
                         (width / 2,) * 4, segments=4)
-    pts = [(x, y, z) for x, y in prof]
-    tf = Transform(euler(rz=angle + 90),
-                   (radius * math.cos(math.radians(angle)),
-                    radius * math.sin(math.radians(angle)), 0.0))
-    return Facet([tf.point(p) for p in pts], color, (0.0, 0.0, 1.0))
+    out = []
+    for angle in (45, 135, 225, 315):
+        tf = Transform(euler(rz=angle + 90),
+                       (radius * math.cos(math.radians(angle)),
+                        radius * math.sin(math.radians(angle)), 0.0))
+        pts = [tf.point((x, y, 0.0)) for x, y in prof]
+        out.append((tf.pos[0], tf.pos[1], [(x, y) for x, y, _ in pts]))
+    return out
+
+
+def _clip(poly, a, b, c, label):
+    """The part of convex polygon `poly` where a*x + b*y <= c.
+
+    `poly` is a list of (point, label) pairs, the label naming what the side
+    leaving that point was cut by, so a cell remembers which neighbour each
+    of its sides is shared with.
+    """
+    out = []
+    n = len(poly)
+    for k in range(n):
+        p, lab = poly[k]
+        q = poly[(k + 1) % n][0]
+        dp = a * p[0] + b * p[1] - c
+        dq = a * q[0] + b * q[1] - c
+        if abs(dp) < 1e-12:
+            dp = 0.0
+        if abs(dq) < 1e-12:
+            dq = 0.0
+        x = None
+        if (dp < 0 < dq) or (dq < 0 < dp):
+            t = dp / (dp - dq)
+            x = (p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t)
+        if dp <= 0:
+            if dq > 0:
+                out.append((p, lab) if x else (p, label))
+                if x:
+                    out.append((x, label))
+            else:
+                out.append((p, lab))
+        elif dq < 0:
+            out.append((x, lab))
+    # A cut through a corner leaves a zero-length side behind.
+    return [(p, lab) for k, (p, lab) in enumerate(out)
+            if math.dist(p, out[(k + 1) % len(out)][0]) > 1e-9]
+
+
+def _power_cells(sites, boundary):
+    """Split convex `boundary` into one cell per (x, y, r) site.
+
+    A power diagram rather than plain nearest-centre cells: weighting by
+    radius moves each shared side out of the bigger feature's way, so a hub
+    and the lightening hole beside it both keep a margin of web.  Sides on
+    `boundary` itself are labelled None, the rest by the neighbouring site.
+    """
+    cells = []
+    for i, (x, y, r) in enumerate(sites):
+        poly = [(p, None) for p in boundary]
+        for j, (u, v, s) in enumerate(sites):
+            if j != i:
+                poly = _clip(poly, 2 * (u - x), 2 * (v - y),
+                             (u * u + v * v - s * s) - (x * x + y * y - r * r),
+                             j)
+        cells.append(poly)
+    return cells
+
+
+def _ray_hit(poly, cx, cy, a):
+    """(distance, side index) where the ray from (cx, cy) at `a` leaves
+    convex `poly`."""
+    dx, dy = math.cos(a), math.sin(a)
+    best = None
+    m = len(poly)
+    for e in range(m):
+        x0, y0 = poly[e]
+        ex = poly[(e + 1) % m][0] - x0
+        ey = poly[(e + 1) % m][1] - y0
+        den = dx * ey - dy * ex
+        if abs(den) < 1e-12:
+            continue
+        t = ((x0 - cx) * ey - (y0 - cy) * ex) / den
+        u = ((x0 - cx) * dy - (y0 - cy) * dx) / den
+        if t > 0.0 and -1e-9 <= u <= 1.0 + 1e-9 and (best is None
+                                                     or t < best[0]):
+            best = (t, e)
+    return best
+
+
+def _cell_rays(cell, cx, cy, n):
+    """Spoke angles for a cell: `n` even rays from its site plus one to each
+    corner, each with the cell point it lands on and the neighbours that
+    point is shared with.
+
+    A ray to every corner is what lets two cells agree on the side between
+    them - both contain its two ends, so neither cuts across the other.
+    """
+    pts = [p for p, _lab in cell]
+    out = []
+    for k, (p, lab) in enumerate(cell):
+        out.append((math.atan2(p[1] - cy, p[0] - cx) % (2 * math.pi), p,
+                    {cell[k - 1][1], lab}))
+    corners = [a for a, _p, _l in out]
+    for k in range(n):
+        a = 2 * math.pi * k / n
+        if any(abs((a - c + math.pi) % (2 * math.pi) - math.pi) < 1e-6
+               for c in corners):
+            continue
+        t, e = _ray_hit(pts, cx, cy, a)
+        out.append((a, (cx + t * math.cos(a), cy + t * math.sin(a)),
+                    {cell[e][1]}))
+    out.sort(key=lambda o: o[0])
+    return out
 
 
 def _bore_decal(z, up, r, color, square=False):
@@ -801,32 +1106,119 @@ def _gear(teeth, color):
                     official, icon_rot=FACE_CAMERA)
 
     r = teeth / 24.0
-    t = 0.40
-    hz = t / 2 + 0.20
-    hub_r = min(0.38, r * 0.72)
+    h = GEAR_T / 2
+    web_z, spoke_z = GEAR_WEB_Z, GEAR_SPOKE_Z
+    hub_r = 0.38
     hub_c = mix_color(color, "#173d59", 0.11)
-    p = extrude(gear_profile(teeth, r), -t / 2, t / 2, color)
+    recess_c = mix_color(color, "#11151b", 0.24)
+    bore_c = mix_color(color, "#1b1f27", 0.66)
+    profile = gear_profile(teeth, r)
+    root = min(math.hypot(x, y) for x, y in profile)
 
-    # VEX's spur gears are solid molded faces with round lightening holes.
+    # VEX's spur gears have round lightening holes through a recessed web.
     # Their layout is one of the quickest visual identifiers for the real
     # pieces: eight around a 36T, and two rings of eight on the classic 60T.
-    hole_decals = []
-    for x, y in _gear_holes(teeth):
-        hole_decals += _painted_hole(x, y, t / 2, +1, color)
-    if teeth >= 60:
-        slot_c = mix_color(color, "#10151c", 0.82)
-        hole_decals += [
-            _gear_slot(a, 1.43, 0.72, 0.13, t / 2, slot_c)
-            for a in (45, 135, 225, 315)
-        ]
-    _attach_face_details(p, hole_decals, +1)
+    holes = _gear_holes(teeth)
+    slots = _gear_slots(teeth)
+    reach = max((math.hypot(x, y) + HOLE_R for x, y in holes), default=0.0)
+    rim_in = max(root - GEAR_RIM_W, reach + 0.06)
+    solid = rim_in - hub_r < 0.2
+    if solid:
+        # Too small for a web: the face runs flat from the teeth to a centre
+        # cap just wide enough to carry the square bore.
+        rim_in = min(0.24, root * 0.75)
 
-    hub_up = attach(cylinder(hub_r, t / 2, hz, hub_c, segments=24),
-                    _bore_decal(hz, +1, 0.0, hub_c, square=True), +1)
-    hub_dn = attach(cylinder(hub_r, -hz, -t / 2, hub_c, segments=24),
-                    _bore_decal(-hz, -1, 0.0, hub_c, square=True), -1)
-    return Part(f"gear_{teeth}", f"{teeth}-Tooth Gear", color,
-                p + hub_up + hub_dn, icon_rot=FACE_CAMERA)
+    p = extrude(profile, -h, h, color, cap_top=False, cap_bottom=False,
+                rim_top=True, rim_bottom=True)
+    # The toothed rim, one facet per tooth.  A face fanned from the centre
+    # would be long slivers each sorting by a point near the hub, and the
+    # beam behind the gear would paint straight across them.
+    inner = circle_profile(rim_in, teeth)
+    for i in range(teeth):
+        j = (i + 1) % teeth
+        outline = [inner[i]] + profile[4 * i:4 * i + 4] + [profile[4 * j],
+                                                          inner[j]]
+        p.append(Facet([(x, y, h) for x, y in outline], color,
+                       (0.0, 0.0, 1.0)))
+        p.append(Facet([(x, y, -h) for x, y in reversed(outline)], color,
+                       (0.0, 0.0, -1.0)))
+
+    if solid:
+        for up in (1, -1):
+            cap = [Facet([(x, y, h * up) for x, y in inner[::up]], color,
+                         (0.0, 0.0, float(up)))]
+            p += attach(cap, _bore_decal(h * up, up, 0.0, color,
+                                         square=True), up)
+        return Part(f"gear_{teeth}", f"{teeth}-Tooth Gear", color, p,
+                    icon_rot=FACE_CAMERA)
+
+    # The rim's inner wall, stepping down to the web.
+    wall = list(reversed(inner))
+    p += extrude(wall, web_z, h, color, cap_top=False, cap_bottom=False,
+                 rim_top=True, rim_bottom=False)
+    p += extrude(wall, -h, -web_z, color, cap_top=False, cap_bottom=False,
+                 rim_top=False, rim_bottom=True)
+
+    # The web is split into one cell per feature - the hub, each hole, each
+    # slot - and each cell is built as rings out from its feature, the same
+    # way a beam's face is built round its holes.  That keeps every facet
+    # small and puts real geometry on the near side of every void.
+    sites = [(0.0, 0.0, hub_r)] + [(x, y, HOLE_R) for x, y in holes]
+    sites += [(x, y, 0.0) for x, y, _prof in slots]
+    is_hole = set(range(1, len(holes) + 1))
+    for k, cell in enumerate(_power_cells(sites, inner)):
+        cx, cy, rad = sites[k]
+        # The hub is the one feature big enough to show its facets.
+        rays = _cell_rays(cell, cx, cy,
+                          GEAR_RAYS * 2 if k == 0 else GEAR_RAYS)
+        edge = [pt for _a, pt, _l in rays]
+        if k > len(holes):
+            prof = slots[k - len(holes) - 1][2]
+            hole = []
+            for a, _pt, _l in rays:
+                t, _e = _ray_hit(prof, cx, cy, a)
+                hole.append((cx + t * math.cos(a), cy + t * math.sin(a)))
+        else:
+            hole = [(cx + rad * math.cos(a), cy + rad * math.sin(a))
+                    for a, _pt, _l in rays]
+
+        # A spoke runs along every side two holes share, at its own level
+        # between the web and the rim; everywhere else drops to the web.
+        rib = [k in is_hole and labels <= is_hole for _a, _p, labels in rays]
+        for up in (1, -1):
+            if any(rib):
+                step_z = [spoke_z if s else web_z for s in rib]
+                foot = _blend(hole, edge, 0.45)
+                brow = _blend(hole, edge, 0.7)
+                p += _sink_color(_relief_step(hole, foot, web_z, web_z, up,
+                                              color), web_z, recess_c)
+                p += _relief_step(foot, brow, web_z, step_z, up, color)
+                p += _sink_color(_relief_step(brow, edge, step_z, step_z, up,
+                                              color), web_z, recess_c)
+            else:
+                p += _sink_color(_relief_step(hole, edge, web_z, web_z, up,
+                                              color), web_z, recess_c)
+
+        if k == 0:
+            hub_up = extrude(hole, web_z, h, hub_c, cap_bottom=False,
+                             rim_bottom=False)
+            hub_dn = extrude(hole, -h, -web_z, hub_c, cap_top=False,
+                             rim_top=False)
+            p += attach(hub_up, _bore_decal(h, +1, 0.0, hub_c, square=True),
+                        +1)
+            p += attach(hub_dn, _bore_decal(-h, -1, 0.0, hub_c, square=True),
+                        -1)
+            continue
+        # A real void, dark inside, as on a beam (see _relief_step).
+        p += extrude(list(reversed(hole)), -web_z, web_z, bore_c,
+                     cap_top=False, cap_bottom=False,
+                     rim_top=True, rim_bottom=True)
+        p.append(Facet([(x, y, -web_z) for x, y in hole], bore_c,
+                       (0.0, 0.0, 1.0)))
+        p.append(Facet([(x, y, web_z) for x, y in reversed(hole)], bore_c,
+                       (0.0, 0.0, -1.0)))
+    return Part(f"gear_{teeth}", f"{teeth}-Tooth Gear", color, p,
+                icon_rot=FACE_CAMERA)
 
 
 # The hub each tyre is sold on, for the wheels with official meshes.
@@ -1609,7 +2001,12 @@ _RULES = [
 # Every part has a procedural form; "cad" only overrides the handful that ship
 # with real geometry, so nothing is unavailable at the lower level.
 DETAIL_LEVELS = ("cad", "simple")
-_detail = "cad"
+# CAD is the default everywhere - the CLI, Studio and saved settings - and
+# safe everywhere: a part with no bundled mesh falls back to its procedural
+# form.
+DEFAULT_DETAIL = "cad"
+
+_detail = DEFAULT_DETAIL
 
 _cache = {}
 

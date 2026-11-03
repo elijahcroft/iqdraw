@@ -22,6 +22,8 @@ import re
 from dataclasses import dataclass
 
 from .geom import Disc, Edge, Facet, mat_apply, vsub
+from . import joints as J
+from .drive import MESH_TOL, drive
 
 # A face-to-face joint is contact, not interference, and floating-point noise
 # puts it either side of zero.  Parts have to share more than this in all three
@@ -33,9 +35,6 @@ TOUCH = 0.12
 # nothing, so this only has to absorb rounding.
 REACH = 0.15
 
-# Gear centre distance is exact arithmetic - pitch radius is teeth/24 - so the
-# tolerance only has to cover a spec author writing 1.5 for 1.5.
-MESH_TOL = 0.06
 # Beyond this much of a gap, two gears are unrelated rather than badly spaced.
 # Being a whole hole out is the classic slip, so this has to reach past 1.0;
 # what keeps it precise is the "nothing in between" test, not this number.
@@ -331,13 +330,203 @@ def _check_stranded(items):
                           f"check the coordinates")
 
 
+# ---------------------------------------------------------- joint checks
+#
+# These read the joint model in `joints.py` - holes, rods and nominal
+# envelopes - rather than the drawing's bounding boxes, which is what lets them
+# say "through solid plastic, not a hole" instead of only "touching".
+
+# Cylinders - spacers, collars, gears - are thin enough that the 0.12 slack
+# beams get would hide a whole spacer's worth of mistake, so they get less.
+CYL_TOL = 0.06
+# Parts stacked on one shaft are placed by exact arithmetic; anything past
+# rounding is two parts in one slot.
+COAX_TOL = 0.04
+# Parts a finished build has to hold on with a pin, shaft or standoff.  Leaves
+# out the electronics, whose holes are not modelled, and rubber bands.
+FASTENED = ("beam", "plate", "corner", "standoff") + J.CYLINDERS
+
+
+def _check_rods(model, collided):
+    """
+    A pin or shaft running through solid plastic rather than a hole.
+
+    The half-hole slip: a shaft at x=2.5 instead of 2, a pin one layer too
+    high.  The drawing hides it, because the rod is drawn inside the part it
+    is passing through.
+    """
+    for r in model.parts:
+        if not r.rod:
+            continue
+        pts = J.rod_points(r.rod)
+        held = {j.part for j in model.joints if j.rod == r.index}
+        for p in model.parts:
+            if (p is r or p.rod or p.index in held or p.family == "band"
+                    or p.opaque or min(J.overlap(r.box, p.box)) <= 0):
+                continue
+            if not any(J.inside(q, p) for q in pts):
+                continue
+            # Neither end of a rod in the wrong place is "loose" as well -
+            # it is one mistake, already reported.
+            collided.update((r.index, p.index))
+            msg = (f"{r.label} runs through solid {p.label}, "
+                   f"not through one of its holes")
+            near = J.nearest_hole(p, r.rod)
+            if near:
+                c = near[0].center
+                msg += (f" - the nearest hole is at ({c[0]:g}, {c[1]:g}, "
+                        f"{c[2]:g}), {near[1]:.2f} off")
+            yield Problem(max(r.step, p.step), "rod in solid", msg)
+
+
+def _check_loose(model, collided):
+    """
+    Parts nothing holds on.
+
+    A pin has to reach into two parts to join them; a shaft has to pass
+    through something; a beam, gear or spacer needs a pin, shaft or standoff
+    through it.  Without one it is resting where the drawing put it, and the
+    first student to pick the model up finds out.
+    """
+    if len(model.parts) < 2:
+        return
+    opaque = [u for u in model.parts if u.opaque]
+    for p in model.parts:
+        if p.index in collided:
+            continue          # already reported, more usefully
+        if any(u is not p and min(J.overlap(p.box, u.box)) > -0.1
+               for u in opaque):
+            continue          # held, perhaps, by a part not modelled here
+        joined = model.joined(p.index)
+        if p.family == "pin" and len(joined) < 2:
+            what = (f"only goes into {model.parts[joined[0]].label}"
+                    if joined else "is not in any hole")
+            yield Problem(p.step, "loose",
+                          f"{p.label} {what} - a pin has to reach into two "
+                          f"parts to hold them together")
+        elif p.family == "shaft" and not joined:
+            yield Problem(p.step, "loose",
+                          f"{p.label} does not pass through any hole")
+        elif p.family in FASTENED and not joined:
+            yield Problem(p.step, "loose",
+                          f"nothing pins or shafts {p.label} to the build - "
+                          f"it would fall off when the model is picked up")
+
+
+def _cylinder(p):
+    x0, _, z0, x1, _, z1 = J.geometry_box(p.name)
+    return x1, z1          # radius, half-height
+
+
+def _cyl_vs_box(c, b):
+    """(axial, radial) overlap of cylinder part `c` and box part `b`."""
+    r, h = _cylinder(c)
+    best = (0.0, 0.0)
+    for box in b.boxes:
+        x0, y0, z0, x1, y1, z1 = box
+        pts = [J.to_local(c.tf, (x, y, z)) for x in (x0, x1)
+               for y in (y0, y1) for z in (z0, z1)]
+        lo = [min(q[i] for q in pts) for i in range(3)]
+        hi = [max(q[i] for q in pts) for i in range(3)]
+        axial = min(hi[2], h) - max(lo[2], -h)
+        cx = min(max(0.0, lo[0]), hi[0])
+        cy = min(max(0.0, lo[1]), hi[1])
+        radial = r - math.hypot(cx, cy)
+        if min(axial, radial) > min(best):
+            best = (axial, radial)
+    return best
+
+
+def _check_collisions(model, _collided):
+    """
+    Solid parts in the same space: a spacer and a gear overlapping on one
+    shaft, a wheel rubbing the rail, a beam through the brain.
+
+    Beam against beam is the `overlap` rule's, gear against gear the mesh
+    rule's; pins and shafts are meant to pass through things and have their
+    own rule above.
+    """
+    solid = [p for p in model.parts
+             if not p.rod and p.family != "band" and not p.opaque]
+    for i, a in enumerate(solid):
+        for b in solid[i + 1:]:
+            if min(J.overlap(a.box, b.box)) <= 0:
+                continue
+            if a.family in STRUCTURAL and b.family in STRUCTURAL:
+                continue
+            if a.name == b.name and a.tf == b.tf:
+                continue                      # the duplicate rule's
+            ca, cb = a.family in J.CYLINDERS, b.family in J.CYLINDERS
+            depth = None
+            if ca and cb:
+                ax, bx = a.axis, b.axis
+                if abs(sum(x * y for x, y in zip(ax, bx))) < 0.999:
+                    continue                  # skew: bevel gears and the like
+                d = vsub(b.tf.pos, a.tf.pos)
+                along = sum(x * y for x, y in zip(d, ax))
+                perp = math.sqrt(max(0.0, sum(v * v for v in d) - along ** 2))
+                (ra, ha), (rb, hb) = _cylinder(a), _cylinder(b)
+                axial = ha + hb - abs(along)
+                if perp < J.ON_AXIS:
+                    if axial > COAX_TOL:
+                        depth = axial
+                elif not (a.family == "gear" and b.family == "gear"):
+                    if min(axial, ra + rb - perp) > CYL_TOL:
+                        depth = min(axial, ra + rb - perp)
+            elif ca or cb:
+                c, x = (a, b) if ca else (b, a)
+                axial, radial = _cyl_vs_box(c, x)
+                if min(axial, radial) > CYL_TOL:
+                    depth = min(axial, radial)
+            else:
+                d = max(min(J.overlap(p, q)) for p in a.boxes for q in b.boxes)
+                if d > TOUCH:
+                    depth = d
+            if depth is not None:
+                yield Problem(max(a.step, b.step), "collision",
+                              f"{a.label} and {b.label} overlap by "
+                              f"{depth:.2f} holes - one of them is in the "
+                              f"wrong place")
+
+
+def _check_jammed(model, collided):
+    """
+    Gears meshing in a loop that cannot turn.
+
+    Three gears all meshing with each other, or two shafts joined by two
+    gear pairs of different ratios: each mesh is fine alone, but together
+    they ask one shaft to turn at two speeds, so nothing turns.  It draws
+    perfectly and locks solid in the hand.
+    """
+    for train in drive(model)["trains"]:
+        if not train["jammed"]:
+            continue
+        a, b = (model.parts[i] for i in train["clash"])
+        gears = [model.parts[i] for body in train["bodies"]
+                 for i in body["parts"] if model.parts[i].family == "gear"]
+        yield Problem(max(p.step for p in gears), "jammed",
+                      f"{a.label} and {b.label} close a loop of meshing "
+                      f"gears that would have to turn two speeds at once, "
+                      f"so none of the {len(gears)} gears can turn - take "
+                      f"one out of the loop")
+
+
 CHECKS = (_check_duplicates, _check_structural_overlap,
           _check_gear_mesh, _check_stranded)
 
+# Rules over the joint model.  They share a set of rods already reported as
+# passing through solid, so one mistake is not also reported as a loose pin.
+JOINT_CHECKS = (_check_rods, _check_loose, _check_collisions,
+                _check_jammed)
 
-def check(build):
+
+def check(build, model=None):
     """Run every check over a build and return the problems, in step order."""
     items = _items(build)
     found = [p for rule in CHECKS for p in rule(items)]
+    model = model or J.analyse(build)
+    collided = set()
+    for rule in JOINT_CHECKS:
+        found.extend(rule(model, collided))
     found.sort(key=lambda p: (p.step, p.kind))
     return found

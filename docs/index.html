@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>IQDraw — VEX IQ build instructions, drawn from a text spec</title>
-<meta name="description" content="Describe a VEX IQ build as a short Python file of part names and hole coordinates. IQDraw renders isometric step-by-step diagrams and a printable booklet. Offline, no CAD.">
+<meta name="description" content="Turn a short, readable VEX IQ build specification into polished isometric steps and a printable, progress-aware booklet. CAD-first, offline, and open source.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23171b21'/%3E%3Ccircle cx='11' cy='11' r='3.1' fill='none' stroke='%23eef0f3' stroke-width='2'/%3E%3Ccircle cx='21' cy='11' r='3.1' fill='none' stroke='%23eef0f3' stroke-width='2'/%3E%3Ccircle cx='11' cy='21' r='3.1' fill='none' stroke='%23eef0f3' stroke-width='2'/%3E%3Ccircle cx='21' cy='21' r='3.1' fill='%2396421c' stroke='%2396421c' stroke-width='2'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -76,6 +76,12 @@ code,kbd,pre{font-family:var(--mono)}
 .btn-1:hover{background:var(--accent);color:#fff}
 .btn-2{background:var(--card);color:var(--ink);border-color:var(--line);box-shadow:var(--shadow)}
 .btn-2:hover{border-color:var(--accent);color:var(--accent)}
+.proof{display:flex;flex-wrap:wrap;gap:9px;margin:18px 0 0;padding:0;list-style:none}
+.proof li{display:flex;align-items:center;gap:7px;padding:6px 10px;border-radius:999px;
+  background:var(--card);border:1px solid var(--line);color:var(--ink-2);
+  font:500 12.5px/1.3 var(--mono)}
+.proof li::before{content:"";width:7px;height:7px;border-radius:50%;
+  background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
 
 /* ------------------------------------------------------- signature: stepper */
 .stepper{margin:44px 0 0;background:var(--card);border:1px solid var(--line);
@@ -165,12 +171,36 @@ ul.plain li::before{content:"";position:absolute;left:4px;top:.62em;width:7px;he
   border-radius:50%;border:2px solid var(--accent)}
 ul.plain b{color:var(--ink)}
 
+.showcase{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr);
+  margin:32px 0 24px;overflow:hidden;text-decoration:none;color:inherit;
+  transition:border-color .16s,transform .16s}
+.showcase:hover{border-color:var(--accent);transform:translateY(-2px)}
+.showcase-media{min-height:340px;padding:22px;background:var(--chip);
+  border-right:1px solid var(--line);display:flex;align-items:center;justify-content:center}
+.showcase-media img{display:block;width:100%;height:100%;max-height:390px;object-fit:contain}
+.showcase-copy{padding:30px;display:flex;flex-direction:column;justify-content:center}
+.showcase-copy .flag{font:600 12px/1.3 var(--mono);letter-spacing:.14em;
+  text-transform:uppercase;color:var(--accent)}
+.showcase-copy h3{font-size:clamp(24px,3vw,32px);margin:10px 0 10px}
+.showcase-copy>p{margin:0;color:var(--ink-2);font-size:16px}
+.stats{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 0}
+.stats span{padding:7px 10px;border:1px solid var(--line);border-radius:7px;
+  background:var(--chip);font:500 12px/1.2 var(--mono);color:var(--ink-2)}
+.showcase .go{margin:24px 0 0;color:var(--link);font-weight:600}
+@media (max-width:760px){.showcase{grid-template-columns:1fr}.showcase-media{
+  min-height:260px;border-right:0;border-bottom:1px solid var(--line)}
+  .showcase-copy{padding:24px}}
+@media (prefers-reduced-motion:reduce){.showcase:hover{transform:none}}
+
 .books{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:18px;
   margin:32px 0 0}
 .book{padding:20px;text-decoration:none;color:inherit;display:flex;
   flex-direction:column;transition:border-color .16s,transform .16s}
 .book:hover{border-color:var(--accent);transform:translateY(-2px)}
 @media (prefers-reduced-motion:reduce){.book:hover{transform:none}}
+.book-media{height:150px;margin:-20px -20px 18px;padding:10px;background:var(--chip);
+  border-bottom:1px solid var(--line);border-radius:13px 13px 0 0;overflow:hidden}
+.book-media img{display:block;width:100%;height:100%;object-fit:contain}
 .book .n2{font-family:var(--mono);font-size:12px;letter-spacing:.13em;
   text-transform:uppercase;color:var(--ink-3)}
 .book h3{margin:9px 0 6px;font-size:18px}
@@ -205,15 +235,22 @@ footer nav{margin-left:auto;display:flex;gap:20px;flex-wrap:wrap}
 <div class="hero">
   <div class="wrap">
     <p class="eyebrow">VEX IQ · 2nd generation</p>
-    <h1>Say where the parts go. IQDraw draws the rest.</h1>
+    <h1>From build idea to instructions people can actually follow.</h1>
     <p class="lede">A build is a short Python file: <b>a part name and a hole
-      coordinate per line</b>. IQDraw draws the isometric step-by-step diagrams
-      and wraps them in a printable booklet — the shape of a real VEX build
-      guide. Offline, no CAD, no web service.</p>
+      coordinate per line</b>. IQDraw turns it into polished isometric steps,
+      parts callouts and a printable booklet. It prefers local CAD models when
+      they are available and falls back automatically to its included,
+      independently drawn geometry.</p>
     <div class="cta">
-      <a class="btn btn-1" href="#install">Install it</a>
-      <a class="btn btn-2" href="#examples">Read a finished booklet</a>
+      <a class="btn btn-1" href="#examples">Explore the builds</a>
+      <a class="btn btn-2" href="#install">Install IQDraw</a>
     </div>
+    <ul class="proof" aria-label="IQDraw highlights">
+      <li>CAD-first rendering</li>
+      <li>Works offline</li>
+      <li>Print-ready output</li>
+      <li>Open source</li>
+    </ul>
 
     <div class="stepper card">
       <div class="stepper-head">
@@ -347,7 +384,7 @@ footer nav{margin-left:auto;display:flex;gap:20px;flex-wrap:wrap}
 <section id="checks">
   <div class="wrap">
     <div class="sec-head">
-      <h2>Four things it will not let you get wrong quietly</h2>
+      <h2>Eight things it will not let you get wrong quietly</h2>
       <p>Every render runs the checks first and prints what it finds.
       <code>--strict</code> makes them fatal, <code>--check-only</code> runs
       them without drawing.</p>
@@ -360,6 +397,10 @@ footer nav{margin-left:auto;display:flex;gap:20px;flex-wrap:wrap}
         <tr><td><code>overlap</code></td><td>two beams or plates occupy the same space</td></tr>
         <tr><td><code>gear mesh</code></td><td>a gear pair is close to meshing but not actually meshing</td></tr>
         <tr><td><code>stranded</code></td><td>a part touches nothing else in the build</td></tr>
+        <tr><td><code>rod in solid</code></td><td>a pin or shaft runs through plastic instead of a hole</td></tr>
+        <tr><td><code>loose</code></td><td>a pin holds fewer than two parts, or nothing pins or shafts a part on</td></tr>
+        <tr><td><code>collision</code></td><td>solid parts fill the same space, like a gear overlapping its spacer</td></tr>
+        <tr><td><code>jammed</code></td><td>meshing gears form a loop that cannot turn</td></tr>
       </tbody>
     </table>
     </div>
@@ -370,9 +411,10 @@ my-build.py:42: <b>unknown part</b> 'beem_1x8' - did you mean 'beam'?
     s.add("beem_1x8", (0, 0, 0))</div>
     <p class="note">Every rule only fires on something a correct build cannot
     do, and that is the whole design. A checker that reports a working build
-    gets switched off, and then it catches nothing. It is why the overlap rule
-    looks at beams and plates only: pins through beams and shafts through gears
-    are <em>meant</em> to interpenetrate.</p>
+    gets switched off, and then it catches nothing. It is why the joint
+    checks read each part's holes and each pin's and shaft's centre line
+    rather than bounding boxes: that is what tells a pin <em>through a
+    hole</em> from a pin <em>through solid plastic</em>.</p>
   </div>
 </section>
 
@@ -390,8 +432,10 @@ my-build.py:42: <b>unknown part</b> 'beem_1x8' - did you mean 'beam'?
       all before any of the build itself.</li>
       <li><b>“Step 3 of 6” on every step</b>, in words rather than only as a
       badge, so progress never has to be held in your head.</li>
-      <li><b>A box to tick per step</b>, which works on screen and survives
-      printing.</li>
+      <li><b>Progress that survives a browser refresh.</b> Tick a step as it is
+      completed and the cover updates immediately. The browser remembers the
+      checklist locally, with a clear reset control when it is time to build
+      again; the boxes still survive printing.</li>
       <li><b>A parts callout on every step</b>, listing only what that step
       needs, with counts — and everything a section needs listed where the
       section starts, so parts can be fetched once rather than one at a
@@ -429,9 +473,9 @@ my-build.py:42: <b>unknown part</b> 'beem_1x8' - did you mean 'beam'?
         <p class="addr">Desktop</p>
         <h3>IQDraw Studio</h3>
         <p>Prefer buttons to terminal commands? <code>iqdraw-gui</code> opens a
-        desktop app with bundled examples, recent projects, step and inventory
-        review, and HTML/SVG/PNG output through the same tested path as the
-        CLI.</p>
+        keyboard-accessible desktop app with bundled examples, recent projects,
+        step and inventory review, build checks, CAD-first rendering and
+        HTML/SVG/PNG output through the same tested path as the CLI.</p>
       </div>
     </div>
     <p class="note">Build specs are Python programs, so only open files you
@@ -443,13 +487,37 @@ my-build.py:42: <b>unknown part</b> 'beem_1x8' - did you mean 'beam'?
 <section id="examples">
   <div class="wrap">
     <div class="sec-head">
-      <h2>Four worked builds</h2>
-      <p>Rendered from the specs in the repository every time this site is
-      deployed, so they are whatever the current code actually draws. Open one
-      and print it.</p>
+      <h2>Five builds, from first frame to flagship rover</h2>
+      <p>Every preview and booklet is rendered from the repository when this
+      site is deployed. Nothing is a hand-made mockup: open a build, inspect
+      every step, check off progress, or print it.</p>
     </div>
+
+    <a class="showcase card" href="examples/survey-rover.html">
+      <div class="showcase-media">
+        <img src="previews/survey-rover.png" width="720" height="500"
+          loading="lazy" alt="Finished six-wheel survey rover with a grey deck, yellow sensor mast and red front bumper">
+      </div>
+      <div class="showcase-copy">
+        <span class="flag">New flagship build</span>
+        <h3>Six-Wheel Survey Rover</h3>
+        <p>A modular exploration platform with mirrored wheel assemblies, a
+        rigid equipment deck, Robot Brain, bumper switch and elevated distance
+        sensor. The final inspection deliberately changes camera angle so the
+        hidden side is easy to verify.</p>
+        <div class="stats" aria-label="Build statistics">
+          <span>24 steps</span><span>80 parts</span><span>7 sections</span>
+          <span>14 part types</span>
+        </div>
+        <span class="go">Open the complete booklet →</span>
+      </div>
+    </a>
+
     <div class="books">
       <a class="book card" href="examples/pinned-frame.html">
+        <div class="book-media"><img src="previews/pinned-frame.png"
+          width="720" height="480" loading="lazy"
+          alt="Finished pinned rectangular frame"></div>
         <p class="n2">5 steps · 12 parts</p>
         <h3>Pinned Frame</h3>
         <p>The base every other build starts from, and the worked example of
@@ -457,30 +525,41 @@ my-build.py:42: <b>unknown part</b> 'beem_1x8' - did you mean 'beam'?
         <p class="go">Open the booklet →</p>
       </a>
       <a class="book card" href="examples/gear-train.html">
-        <p class="n2">6 steps · 15 parts</p>
+        <div class="book-media"><img src="previews/gear-train.png"
+          width="720" height="480" loading="lazy"
+          alt="Finished three-gear ratio demonstrator"></div>
+        <p class="n2">6 steps · 14 parts</p>
         <h3>Gear Train</h3>
-        <p>A 12T / 36T / 60T train. Turning the crank turns all three gears,
+        <p>A 12T / 36T / 60T train. Turning the knob turns all three gears,
         with no free play.</p>
         <p class="go">Open the booklet →</p>
       </a>
       <a class="book card" href="examples/drive-base.html">
-        <p class="n2">10 steps · 25 parts</p>
+        <div class="book-media"><img src="previews/drive-base.png"
+          width="720" height="480" loading="lazy"
+          alt="Finished two-wheel drive base"></div>
+        <p class="n2">12 steps · 45 parts</p>
         <h3>Drive Base</h3>
-        <p>Two side frames, joined by cross beams, brain on top. The worked
+        <p>Two side frames on edge, joined by cross beams, brain on top. The worked
         example of assemblies and sections.</p>
         <p class="go">Open the booklet →</p>
       </a>
       <a class="book card" href="examples/grabber-arm.html">
-        <p class="n2">19 steps · 44 parts</p>
+        <div class="book-media"><img src="previews/grabber-arm.png"
+          width="720" height="480" loading="lazy"
+          alt="Finished drive base with a raised grabber arm"></div>
+        <p class="n2">22 steps · 71 parts</p>
         <h3>Grabber Arm</h3>
-        <p>Nineteen steps in eight sections, a shared chassis, and a claw made
+        <p>Twenty-two steps in eight sections, a shared chassis, and a claw made
         of two mirrored fingers.</p>
         <p class="go">Open the booklet →</p>
       </a>
     </div>
-    <p class="note">The larger booklets are several megabytes — every step
-    redraws the model so far. They are built to open and print on a school
-    laptop, but give the grabber arm a moment on a slow connection.</p>
+    <p class="note">The public previews use IQDraw's redistributable procedural
+    geometry. When a local CAD provider is installed, IQDraw selects those
+    meshes by default and keeps the same build specifications and booklet
+    workflow. The larger booklets are several megabytes, so give the grabber
+    arm and survey rover a moment on a slow connection.</p>
   </div>
 </section>
 
@@ -525,7 +604,7 @@ var STEPS = [
 var SNIPPETS = {
   a:'from iqdraw import Build\n\nb = Build("Pinned Frame", subtitle="VEX IQ (2nd gen)")\n\nwith b.step("Lay a 2x12 beam down flat.") as s:\n    s.add("beam_2x12", (0, 0, 0))',
   b:'with b.step("Lay the two rails down, five holes apart.") as s:\n    s.many("beam_2x12", [(0, y, 0) for y in (0, 5)])\n\nwith b.step("Lay a 1x7 beam across both rails.") as s:\n    s.add("beam_1x7", (1, 0, 0.5), rot=(0, 0, 90), arrow=True)\n\nwith b.step("Push four pins down through the cross beam into the rails.",\n            caption="Two pins into each rail. One would let it pivot.") as s:\n    s.many("pin_1x1", [(1, y, 0.25) for y in (0, 1, 5, 6)],\n           axis="z", arrow=True)',
-  c:'from iqdraw import Assembly, Build\n\nside = Assembly("Side Frame")\n\nwith side.step("Lay a 2x12 beam down flat.") as s:\n    s.add("beam_2x12", (0, 0, 0))\n\nwith side.step("Push a shaft through hole 1 and hole 10.") as s:\n    s.many("shaft_4", [(x, 0, 0) for x in (1, 10)], axis="y", arrow="+y")\n\nb = Build("Drive Base", subtitle="VEX IQ (2nd gen)")\n\nb.section("One side frame", "You will build a second one just like it.")\nb.place(side, at=(0, 5, 0))\n\nb.section("The other side frame", "The same steps, mirrored.")\nb.place(side, at=(0, 0, 0), mirror="y")\n\nb.section("Joining the two sides")\n\nwith b.step("Lay a 1x8 beam across both rails, near the front.") as s:\n    s.add("beam_1x8", (2, -1, 0.5), rot=(0, 0, 90), arrow=True)',
+  c:'from iqdraw import Assembly, Build\n\nside = Assembly("Side Frame")\n\nwith side.step("Stand a 2x12 beam up on its long edge.") as s:\n    rail = s.add("beam_2x12", (0, 0, 0), rot=(90, 0, 0))\n\nwith side.step("Push a shaft through hole 1 and hole 10.") as s:\n    s.many("shaft_3", [rail.hole(x) for x in (1, 10)], arrow="+y")\n\nb = Build("Drive Base", subtitle="VEX IQ (2nd gen)")\n\nb.section("One side frame", "You will build a second one just like it.")\nb.place(side, at=(0, 6, 0))\n\nb.section("The other side frame", "The same steps, mirrored.")\nb.place(side, at=(0, 0, 0), mirror="y")\n\nb.section("Joining the two sides")\n\nwith b.step("Lay a 1x6 beam across the two front brackets.") as s:\n    s.add("beam_1x6", (3, 0.5, 2.5), rot=(0, 0, 90), arrow=True)',
   sh:'# python3 -m pip install iqdraw\npython3 -m pip install git+https://github.com/elijahcroft/iqdraw.git\n\niqdraw --new my-build.py        # a starter spec, never overwriting one\niqdraw my-build.py              # writes my-build.html beside it\niqdraw my-build.py --check-only # run the checks, draw nothing'
 };
 

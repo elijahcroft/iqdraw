@@ -25,14 +25,16 @@ class TestExploded(unittest.TestCase):
         parts.set_detail("cad")
 
     def test_an_arrowed_part_is_pulled_back_along_its_arrow(self):
-        s = Step().add("pin_1x1", (0, 0, 0), axis="x", arrow="-x")
+        s = Step()
+        s.add("pin_1x1", (0, 0, 0), axis="x", arrow="-x")
         out, guides = exploded(s.placements)
         self.assertGreater(_x(out[0]), 1.0)
         self.assertEqual(len(guides), 1)
 
     def test_a_part_with_no_arrow_stays_put(self):
-        s = Step().add("beam_1x4", (0, 0, 0)).add("pin_1x1", (0, 5, 0),
-                                                   axis="x", arrow="-x")
+        s = Step()
+        s.add("beam_1x4", (0, 0, 0))
+        s.add("pin_1x1", (0, 5, 0), axis="x", arrow="-x")
         out, _ = exploded(s.placements)
         self.assertEqual(out[0].tf.pos, s.placements[0].tf.pos)
 
