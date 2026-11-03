@@ -111,6 +111,13 @@ def main(argv=None):
                     help="treat any problem the checks find as an error")
     ap.add_argument("--check-only", action="store_true",
                     help="run the checks and report, without drawing anything")
+    ap.add_argument("--views", metavar="DIR", type=pathlib.Path,
+                    help="write the finished model from the top, bottom, "
+                         "each side and the corner, with hole-number rulers, "
+                         "as SVG (and PNG with rsvg-convert)")
+    ap.add_argument("--sheet", metavar="FILE", type=pathlib.Path,
+                    help="write every step and four views on one page, "
+                         ".svg or .png")
     ap.add_argument("--inspect", action="store_true",
                     help="print the finished build as JSON - every part's "
                          "position, box and holes, what is joined to what, "
@@ -179,6 +186,14 @@ def main(argv=None):
     if args.check_only:
         return
 
+    if args.views or args.sheet:
+        _write_views(build, args.views, args.sheet)
+        # Views and sheets are for checking a spec, and a robot-sized
+        # booklet takes far longer to draw - so it is only written when
+        # asked for by name.
+        if not (args.out or args.svg_dir or args.png):
+            return
+
     out = args.out or args.spec.with_suffix(".html")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(booklet(build, hero=not args.no_hero), encoding="utf-8")
@@ -208,6 +223,32 @@ def main(argv=None):
             _remove_stale_step_files(d, ".png", generated_pngs)
         file_count = len(generated_svgs) + len(generated_pngs)
         print(f"{d}/  ({file_count} files)")
+
+
+def _write_views(build, views_dir, sheet):
+    from . import views
+    tool = shutil.which("rsvg-convert")
+    if views_dir:
+        views_dir.mkdir(parents=True, exist_ok=True)
+        for name in views.VIEWS:
+            f = views_dir / f"view-{name}.svg"
+            f.write_text(views.view_svg(build, name), encoding="utf-8")
+            if tool:
+                _rasterise(f, tool)
+        print(f"{views_dir}/  ({len(views.VIEWS)} views"
+              + ("" if tool else ", SVG only: rsvg-convert not found") + ")")
+    if sheet:
+        sheet.parent.mkdir(parents=True, exist_ok=True)
+        if sheet.suffix.lower() == ".png":
+            if not tool:
+                raise SystemExit("--sheet .png needs rsvg-convert; "
+                                 "use a .svg file instead")
+            svg = views.sheet_svg(build, rasterizer=tool)
+            subprocess.run([tool, "-b", "white", "-o", str(sheet)],
+                           input=svg, text=True, check=True)
+        else:
+            sheet.write_text(views.sheet_svg(build), encoding="utf-8")
+        print(sheet)
 
 
 def _rasterise(svg_path: pathlib.Path, tool: str) -> pathlib.Path:

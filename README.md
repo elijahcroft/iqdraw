@@ -92,6 +92,8 @@ and a deliberate final camera change across seven named sections.
 | `--check-only` | run the checks and report, drawing nothing |
 | `--strict` | treat anything the checks find as an error |
 | `--no-check` | skip the checks |
+| `--sheet FILE` | every step and four views of the finished model on one captioned page, `.png` or `.svg` |
+| `--views DIR` | the finished model from the top, bottom, each side and the corner, with hole-number rulers |
 | `--inspect` | print the finished build as JSON — parts, holes, joints, problems — drawing nothing. `--at X,Y,Z` narrows it to one point |
 
 You can also run `python3 -m iqdraw` anywhere you would use the `iqdraw`
@@ -724,23 +726,41 @@ checked it was hard to tell apart on screen and on paper, but it is no longer
 lossless and moves every vertex by up to half a pixel. It is a constant rather
 than a flag because it should be a considered decision, not a per-render one.
 
-**One camera angle.** Everything is drawn from the same isometric viewpoint;
-`view_rz` spins the model but cannot look from underneath.
+**One camera angle in the booklet.** Every step is drawn from the same
+isometric viewpoint; `view_rz` spins the model but cannot look from
+underneath. `--views` can, but only of the finished model, for checking.
+
+**The drawings are mirror images.** The projection puts `+x` to the lower
+right and `+y` to the lower left, which is the reflection of what a camera on
+the `(+1,+1,+1)` diagonal would see. Booklets and views agree with each other,
+and the included parts are near enough symmetric that it rarely shows, but a
+handed part is drawn as its mirror twin, and "left" and "right" in a step's
+words can disagree with the picture.
 
 ---
 
 ## Check the render
 
-The renderer is the only thing that knows whether a spec is right. After
-writing or changing a build, rasterise it and *look*:
+The checks know geometry; only a picture shows whether the build is the one
+you meant. After writing or changing a build, draw it and *look*:
 
 ```bash
-iqdraw examples/my-build.py -o out/x.html --svg-dir out/x-steps --png
+iqdraw examples/my-build.py --sheet out/sheet.png     # every step + 4 views
+iqdraw examples/my-build.py --views out/views         # 7 views of the model
 ```
 
-Then open the PNGs. Coordinates that are one hole out, a part facing the wrong
-way, a gear pair that does not mesh — all of it is obvious in the picture and
-invisible in the spec.
+`--sheet` puts every step — the booklet's own drawings, arrows and all —
+and four views of the finished model on one captioned page: one image to look
+at after each change. `--views` writes the finished model from the top,
+bottom, each of the four sides, and the booklet's corner. The flat views look
+straight down an axis and carry **rulers of hole numbers** along two edges,
+so a part one hole out reads as a wrong number rather than a picture that
+looks a bit off; every view has a key saying which way `+x`, `+y` and `+z`
+point.
+
+Neither writes the booklet unless `-o` is given too, because a robot-sized
+booklet takes far longer to draw than a sheet. For every step as its own file,
+`-o out/x.html --svg-dir out/x-steps --png` still works.
 
 ---
 

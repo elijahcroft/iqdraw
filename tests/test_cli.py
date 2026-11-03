@@ -187,6 +187,23 @@ class TestInspect(_Temp):
                       run(spec, "--inspect", "--at", "0,0").stderr)
 
 
+class TestViews(_Temp):
+    def test_views_are_written_without_a_booklet(self):
+        spec = self.spec(GOOD)
+        r = run(spec, "--views", self.tmp / "v", "--detail", "simple")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((self.tmp / "v" / "view-top.svg").exists())
+        self.assertFalse(spec.with_suffix(".html").exists())
+
+    def test_a_sheet_and_a_booklet_when_both_are_asked_for(self):
+        out = self.tmp / "o.html"
+        r = run(self.spec(GOOD), "--sheet", self.tmp / "s.svg", "-o", out,
+                "--detail", "simple")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Step 2 of 2", (self.tmp / "s.svg").read_text())
+        self.assertTrue(out.exists())
+
+
 class TestErrors(_Temp):
     def test_check_modes_cannot_contradict_each_other(self):
         spec = self.spec(GOOD)
